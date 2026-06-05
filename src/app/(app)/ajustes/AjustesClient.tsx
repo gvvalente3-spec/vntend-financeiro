@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Shield, FolderTree, ChevronDown, Plus, Trash2, Pencil, X, LogOut, Tag, Home, Car, Utensils, ShoppingCart, Heart, Plane, Gift, Smartphone, Dumbbell, GraduationCap, PiggyBank, Briefcase, Zap, Coffee, DollarSign, Baby, Wrench } from "lucide-react";
+import { Shield, FolderTree, ChevronDown, Plus, Trash2, Pencil, X, LogOut, Tag, Home, Car, Utensils, ShoppingCart, Heart, Plane, Gift, Smartphone, Dumbbell, GraduationCap, PiggyBank, Briefcase, Zap, Coffee, DollarSign, Baby, Wrench, AlertTriangle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { CATS_DEFAULT, type CatStore } from "@/lib/utils";
@@ -169,7 +169,6 @@ function Categorias({ workspaceId }: { workspaceId: string }) {
   const [novaSubMap, setNovaSubMap] = useState<Record<string, string>>({});
   const [novaSubsubMap, setNovaSubsubMap] = useState<Record<string, string>>({});
 
-  // Carrega categorias + cat_meta do banco
   useEffect(() => {
     const supabase = createClient();
     Promise.all([
@@ -205,7 +204,6 @@ function Categorias({ workspaceId }: { workspaceId: string }) {
     setCatMeta(m => ({ ...m, [chave]: { cor, icone } }));
   }
 
-  // Sincroniza a árvore inteira no banco
   async function sincronizar(novaTree: CatStore) {
     setCats(novaTree);
     const supabase = createClient();
@@ -226,9 +224,7 @@ function Categorias({ workspaceId }: { workspaceId: string }) {
     if (rows.length > 0) await supabase.from("categorias").insert(rows);
   }
 
-  function clone(): CatStore {
-    return JSON.parse(JSON.stringify(cats));
-  }
+  function clone(): CatStore { return JSON.parse(JSON.stringify(cats)); }
 
   function addCat() {
     const nome = prompt("Nome da nova categoria:")?.trim();
@@ -291,7 +287,6 @@ function Categorias({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Tipo selector */}
       <div className="flex rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
         {(["despesa", "receita"] as const).map(t => (
           <button key={t} onClick={() => { setTipo(t); setAberta(null); }}
@@ -302,7 +297,6 @@ function Categorias({ workspaceId }: { workspaceId: string }) {
         ))}
       </div>
 
-      {/* Lista de categorias */}
       {Object.keys(arvore).map(cat => {
         const estaRenomeando = renomeando?.cat === cat;
         const subCount = Object.keys(arvore[cat]).length;
@@ -311,12 +305,10 @@ function Categorias({ workspaceId }: { workspaceId: string }) {
         const IconeCat = ICONES_MAP[meta.icone] || Tag;
         return (
           <div key={cat} className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
-            {/* Cabeçalho da categoria */}
             <div className="flex items-center gap-2 px-3 py-2.5 cursor-pointer"
               style={{ background: "var(--surface2)" }}
               onClick={() => !estaRenomeando && setAberta(a => a === cat ? null : cat)}>
               <ChevronDown size={15} style={{ color: "var(--text-muted)", transform: aberta === cat ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
-              {/* Bolinha de cor com ícone */}
               <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: meta.cor }}>
                 <IconeCat size={12} color="#fff" />
               </div>
@@ -336,10 +328,8 @@ function Categorias({ workspaceId }: { workspaceId: string }) {
               <button onClick={e => { e.stopPropagation(); delCat(cat); }} style={{ color: "var(--text-muted)" }}><Trash2 size={13} /></button>
             </div>
 
-            {/* Subcategorias + picker de cor/ícone */}
             {aberta === cat && (
               <div className="px-3 pb-3 flex flex-col gap-2 pt-2">
-                {/* Picker de cor */}
                 <div className="flex flex-col gap-1.5 pb-2 border-b" style={{ borderColor: "var(--border)" }}>
                   <p className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>Cor</p>
                   <div className="flex gap-1.5 flex-wrap">
@@ -349,7 +339,6 @@ function Categorias({ workspaceId }: { workspaceId: string }) {
                         style={{ background: cor, transform: meta.cor === cor ? "scale(1.25)" : "scale(1)", outline: meta.cor === cor ? `2px solid ${cor}` : "none", outlineOffset: 2 }} />
                     ))}
                   </div>
-                  {/* Picker de ícone */}
                   <p className="text-xs font-medium mt-1" style={{ color: "var(--text-muted)" }}>Ícone</p>
                   <div className="flex gap-1.5 flex-wrap">
                     {ICONES_KEYS.map(key => {
@@ -393,8 +382,6 @@ function Categorias({ workspaceId }: { workspaceId: string }) {
                     </div>
                   </div>
                 ))}
-
-                {/* Nova subcategoria */}
                 <div className="flex gap-1 pt-1 border-t" style={{ borderColor: "var(--border)" }}>
                   <input value={novaSubMap[cat] || ""} placeholder="Nova subcategoria…"
                     onChange={e => setNovaSubMap(m => ({ ...m, [cat]: e.target.value }))}
@@ -413,11 +400,86 @@ function Categorias({ workspaceId }: { workspaceId: string }) {
         );
       })}
 
-      {/* Nova categoria */}
       <button onClick={addCat}
         className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
         style={{ border: "1px dashed var(--border)", color: "var(--text-muted)" }}>
         <Plus size={15} /> Nova categoria
+      </button>
+    </div>
+  );
+}
+
+// ——— Zerar App ———
+function ZerarApp({ workspaceId }: { workspaceId: string }) {
+  const [confirmando, setConfirmando] = useState(false);
+  const [zerando, setZerando] = useState(false);
+  const [zerado, setZerado] = useState(false);
+
+  async function zerar() {
+    setZerando(true);
+    const supabase = createClient();
+    // Apaga todos os dados financeiros, mantém perfil e categorias
+    await Promise.all([
+      supabase.from("lancamentos").delete().eq("workspace_id", workspaceId),
+      supabase.from("contas").delete().eq("workspace_id", workspaceId),
+      supabase.from("cartoes").delete().eq("workspace_id", workspaceId),
+      supabase.from("investimentos").delete().eq("workspace_id", workspaceId),
+      supabase.from("missoes").delete().eq("workspace_id", workspaceId),
+      supabase.from("recorrencias").delete().eq("workspace_id", workspaceId),
+      supabase.from("contracheques").delete().eq("workspace_id", workspaceId),
+    ]);
+    setZerando(false);
+    setZerado(true);
+    setConfirmando(false);
+    setTimeout(() => setZerado(false), 3000);
+  }
+
+  if (zerado) {
+    return (
+      <div className="flex items-center gap-2 py-3 px-4 rounded-xl text-sm font-medium"
+        style={{ background: "rgba(76,175,130,0.1)", border: "1px solid #4caf82", color: "#4caf82" }}>
+        ✓ App zerado com sucesso! Pode começar a lançar.
+      </div>
+    );
+  }
+
+  if (confirmando) {
+    return (
+      <div className="flex flex-col gap-3 p-4 rounded-xl" style={{ background: "rgba(192,73,47,0.08)", border: "1px solid var(--danger)" }}>
+        <div className="flex items-start gap-2">
+          <AlertTriangle size={16} style={{ color: "var(--danger)", flexShrink: 0, marginTop: 2 }} />
+          <div>
+            <p className="text-sm font-semibold" style={{ color: "var(--danger)" }}>Tem certeza?</p>
+            <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+              Isso vai apagar permanentemente todos os lançamentos, contas, cartões, investimentos, missões e recorrências. O perfil militar e as categorias serão mantidos.
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={zerar} disabled={zerando}
+            className="flex-1 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
+            style={{ background: "var(--danger)", color: "#fff" }}>
+            {zerando ? "Zerando…" : "Sim, zerar tudo"}
+          </button>
+          <button onClick={() => setConfirmando(false)} disabled={zerando}
+            className="flex-1 py-2.5 rounded-xl text-sm font-medium"
+            style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)" }}>
+            Cancelar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+        Apaga lançamentos, contas, cartões, investimentos, missões e recorrências. Perfil e categorias são mantidos.
+      </p>
+      <button onClick={() => setConfirmando(true)}
+        className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
+        style={{ background: "var(--surface2)", border: "1px solid var(--danger)", color: "var(--danger)" }}>
+        <Trash2 size={15} /> Zerar app
       </button>
     </div>
   );
@@ -448,6 +510,10 @@ export default function AjustesClient() {
 
       <Secao titulo="Categorias" icone={<FolderTree size={16} style={{ color: "var(--primary-light)" }} />}>
         <Categorias workspaceId={workspaceId} />
+      </Secao>
+
+      <Secao titulo="Dados" icone={<AlertTriangle size={16} style={{ color: "var(--danger)" }} />}>
+        <ZerarApp workspaceId={workspaceId} />
       </Secao>
 
       {/* Logout */}
