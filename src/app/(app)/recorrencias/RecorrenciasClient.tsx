@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState, useCallback } from "react";
 import { Plus, Pencil, Trash2, Check, ChevronLeft, ChevronRight } from "lucide-react";
@@ -138,14 +138,30 @@ export default function RecorrenciasClient() {
     if (!workspaceId) return;
     setCarregando(true);
     const supabase = createClient();
-    const [{ data: recs }, { data: cts }, { data: carts }] = await Promise.all([
+    const [{ data: recs }, { data: cts }, { data: carts }, { data: catRows }] = await Promise.all([
       supabase.from("recorrencias").select("*").eq("workspace_id", workspaceId).order("created_at"),
       supabase.from("contas").select("*").eq("workspace_id", workspaceId),
       supabase.from("cartoes").select("*").eq("workspace_id", workspaceId),
+      supabase.from("categorias").select("*").eq("workspace_id", workspaceId).order("ordem"),
     ]);
     setRecorrencias((recs || []) as unknown as Recorrencia[]);
     setContas((cts || []) as unknown as Conta[]);
     setCartoes((carts || []) as unknown as Cartao[]);
+
+    // Monta árvore de categorias do banco
+    if (catRows && catRows.length > 0) {
+      const tree: CatStore = { despesa: {}, receita: {} };
+      for (const r of catRows as Array<{ tipo: string; cat: string; sub: string | null; subsub: string | null }>) {
+        const t = r.tipo as "despesa" | "receita";
+        if (!tree[t][r.cat]) tree[t][r.cat] = {};
+        if (r.sub) {
+          if (!tree[t][r.cat][r.sub]) tree[t][r.cat][r.sub] = [];
+          if (r.subsub) (tree[t][r.cat][r.sub] as string[]).push(r.subsub);
+        }
+      }
+      setCats(tree);
+    }
+
     setCarregando(false);
   }, [workspaceId]);
 
@@ -163,12 +179,10 @@ export default function RecorrenciasClient() {
     const supabase = createClient();
 
     if (jaLancado) {
-      // Desfaz: remove lançamento e tira o mês de postados
       await supabase.from("lancamentos").delete().eq("rec_id", r.id).like("data", `${mes}%`);
       const novosPostados = postados.filter(m => m !== mes);
       await supabase.from("recorrencias").update({ postados: novosPostados } as Record<string, unknown>).eq("id", r.id);
     } else {
-      // Lança
       const data = `${mes}-${String(r.dia || 1).padStart(2, "0")}`;
       const ehCartao = !!r.cartao_id;
       await supabase.from("lancamentos").insert({
@@ -180,7 +194,6 @@ export default function RecorrenciasClient() {
         parcela_num: null, parcela_total: null,
       } as Record<string, unknown>);
 
-      // Ajusta saldo se conta à vista — usa estado local
       if (!ehCartao && r.conta_id) {
         const delta = r.tipo === "receita" ? Number(r.valor) : -Number(r.valor);
         const contaLocal = contas.find(c => c.id === r.conta_id);
@@ -307,4 +320,3 @@ export default function RecorrenciasClient() {
     </div>
   );
 }
-
