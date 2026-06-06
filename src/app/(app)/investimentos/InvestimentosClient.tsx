@@ -54,28 +54,18 @@ function ganhoAtivo(a: Investimento, ptax: number) {
 
 async function fetchCotacao(ticker: string): Promise<number | null> {
   try {
-    const upper = ticker.toUpperCase().replace(/\.SA$/i, "");
-    const yahooTicker = `${upper}.SA`;
-
-    const url1 = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1d&range=1d`;
-    const res1 = await fetch(url1, { signal: AbortSignal.timeout(6000), headers: { "User-Agent": "Mozilla/5.0" } });
-    if (res1.ok) {
-      const data = await res1.json();
-      const preco = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-      if (preco && preco > 0) return preco;
-    }
-
-    const url2 = `https://query2.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1d&range=1d`;
-    const res2 = await fetch(url2, { signal: AbortSignal.timeout(6000), headers: { "User-Agent": "Mozilla/5.0" } });
-    if (res2.ok) {
-      const data = await res2.json();
-      const preco = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-      if (preco && preco > 0) return preco;
-    }
-
-    const res3 = await fetch(`https://brapi.dev/api/quote/${upper}?token=anonymous`, { signal: AbortSignal.timeout(5000) });
-    const data3 = await res3.json();
-    return data3?.results?.[0]?.regularMarketPrice || null;
+    // Usa API Route interna — roda no servidor, sem CORS
+    const res = await fetch("/api/cotacoes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tickers: [{ id: "single", ticker, tipo: "br" }],
+      }),
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.resultados?.[0]?.preco ?? null;
   } catch { return null; }
 }
 
