@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState, useCallback } from "react";
 import { Plus, Trash2, Pencil, RefreshCw, Target, PiggyBank, Landmark, LineChart, Globe, Bitcoin, Shield, X, Info } from "lucide-react";
@@ -276,7 +276,7 @@ export default function InvestimentosClient({ inline = false }: { inline?: boole
   async function salvarAlvos() {
     if (!workspaceId) return;
     await createClient().from("invest_metas").update({ alvo_pct: alvoLocal } as Record<string, unknown>).eq("workspace_id", workspaceId);
-    setMetas(m => ({ ...m, alvo_pct: alvoLocal }));
+    setMetas(m => ({ ...m, alvo_pct: alvoLocal as unknown as InvestMetas["alvo_pct"] }));
     setEditAlvo(false);
   }
 
