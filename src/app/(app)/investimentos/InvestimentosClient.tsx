@@ -8,7 +8,6 @@ import { useWorkspace } from "@/hooks/useWorkspace";
 import { brl } from "@/lib/utils";
 import type { Investimento, InvestMetas } from "@/types/database";
 
-// Categorias de investimento
 const CATS = [
   { id: "reserva",   nome: "Reserva de emergência", icon: PiggyBank, cor: "#2a8a72" },
   { id: "rendaFixa", nome: "Renda fixa",             icon: Landmark,  cor: "#3b6ea5" },
@@ -20,7 +19,6 @@ const CATS = [
 ] as const;
 
 type CatId = (typeof CATS)[number]["id"];
-const CAT_BY_ID = Object.fromEntries(CATS.map(c => [c.id, c]));
 
 interface Objetivo { id: string; emoji: string; nome: string; meta: number; }
 
@@ -59,43 +57,28 @@ async function fetchCotacao(ticker: string): Promise<number | null> {
     const upper = ticker.toUpperCase().replace(/\.SA$/i, "");
     const yahooTicker = `${upper}.SA`;
 
-    // Tenta query1 do Yahoo Finance
     const url1 = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1d&range=1d`;
-    const res1 = await fetch(url1, {
-      signal: AbortSignal.timeout(6000),
-      headers: { "User-Agent": "Mozilla/5.0" },
-    });
+    const res1 = await fetch(url1, { signal: AbortSignal.timeout(6000), headers: { "User-Agent": "Mozilla/5.0" } });
     if (res1.ok) {
       const data = await res1.json();
       const preco = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
       if (preco && preco > 0) return preco;
     }
 
-    // Fallback: query2
     const url2 = `https://query2.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1d&range=1d`;
-    const res2 = await fetch(url2, {
-      signal: AbortSignal.timeout(6000),
-      headers: { "User-Agent": "Mozilla/5.0" },
-    });
+    const res2 = await fetch(url2, { signal: AbortSignal.timeout(6000), headers: { "User-Agent": "Mozilla/5.0" } });
     if (res2.ok) {
       const data = await res2.json();
       const preco = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
       if (preco && preco > 0) return preco;
     }
 
-    // Fallback final: Brapi
-    const res3 = await fetch(`https://brapi.dev/api/quote/${upper}?token=anonymous`, {
-      signal: AbortSignal.timeout(5000),
-    });
+    const res3 = await fetch(`https://brapi.dev/api/quote/${upper}?token=anonymous`, { signal: AbortSignal.timeout(5000) });
     const data3 = await res3.json();
     return data3?.results?.[0]?.regularMarketPrice || null;
-
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
-// ——— Modal ———
 function Modal({ titulo, fechar, children }: { titulo: string; fechar: () => void; children: React.ReactNode }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ background: "rgba(0,0,0,0.6)" }} onClick={fechar}>
@@ -114,7 +97,6 @@ function Modal({ titulo, fechar, children }: { titulo: string; fechar: () => voi
 const inp = { background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 14 };
 const lbl = { display: "flex", flexDirection: "column" as const, gap: 4, fontSize: 13, color: "var(--text-muted)" };
 
-// ——— Form Ativo ———
 function FormAtivo({ workspaceId, fechar, onSalvo, inicial }: { workspaceId: string; fechar: () => void; onSalvo: () => void; inicial?: Investimento }) {
   const [nome, setNome] = useState(inicial?.nome || "");
   const [ticker, setTicker] = useState(inicial?.ticker || "");
@@ -190,7 +172,6 @@ function FormAtivo({ workspaceId, fechar, onSalvo, inicial }: { workspaceId: str
   );
 }
 
-// ——— Form Aporte ———
 function FormAporte({ ativo, fechar, onSalvo, ptax }: { ativo: Investimento; fechar: () => void; onSalvo: () => void; ptax: number }) {
   const [novasCotas, setNovasCotas] = useState("");
   const [precoCompra, setPrecoCompra] = useState(String(ativo.preco_atual || ativo.pm || ""));
@@ -226,7 +207,6 @@ function FormAporte({ ativo, fechar, onSalvo, ptax }: { ativo: Investimento; fec
   );
 }
 
-// ——— Componente principal ———
 export default function InvestimentosClient({ inline = false }: { inline?: boolean }) {
   const { workspaceId, loading: wsLoading } = useWorkspace();
   const [itens, setItens] = useState<Investimento[]>([]);
@@ -238,6 +218,8 @@ export default function InvestimentosClient({ inline = false }: { inline?: boole
   const [aportando, setAportando] = useState<Investimento | null>(null);
   const [buscando, setBuscando] = useState<Record<string, boolean>>({});
   const [editMetas, setEditMetas] = useState(false);
+  const [editAlvo, setEditAlvo] = useState(false);
+  const [alvoLocal, setAlvoLocal] = useState<Record<string, number>>({});
 
   const carregar = useCallback(async () => {
     if (!workspaceId) return;
@@ -254,6 +236,9 @@ export default function InvestimentosClient({ inline = false }: { inline?: boole
       if (Array.isArray(imAny.objetivos_custom) && imAny.objetivos_custom.length > 0) {
         setObjetivos(imAny.objetivos_custom as Objetivo[]);
       }
+      // Carrega alvos salvos
+      const alvos = (imAny.alvo_pct as Record<string, number>) || {};
+      setAlvoLocal(alvos);
     }
     setCarregando(false);
   }, [workspaceId]);
@@ -288,6 +273,13 @@ export default function InvestimentosClient({ inline = false }: { inline?: boole
     await createClient().from("invest_metas").update({ objetivos_custom: novos } as Record<string, unknown>).eq("workspace_id", workspaceId);
   }
 
+  async function salvarAlvos() {
+    if (!workspaceId) return;
+    await createClient().from("invest_metas").update({ alvo_pct: alvoLocal } as Record<string, unknown>).eq("workspace_id", workspaceId);
+    setMetas(m => ({ ...m, alvo_pct: alvoLocal }));
+    setEditAlvo(false);
+  }
+
   function addObjetivo() {
     const novos = [...objetivos, { id: Date.now().toString(36), emoji: "🎯", nome: "Novo objetivo", meta: 0 }];
     salvarObjetivos(novos);
@@ -312,13 +304,16 @@ export default function InvestimentosClient({ inline = false }: { inline?: boole
   itens.forEach(x => { if (x.obj) porObj[x.obj] = (porObj[x.obj] || 0) + valorAtivo(x, ptax); });
 
   const pizzaData = CATS.map(c => ({ ...c, valor: porCat[c.id] || 0, pct: total ? ((porCat[c.id] || 0) / total) * 100 : 0 })).filter(c => c.valor > 0);
-
   const grupos = CATS.map(c => ({ ...c, itens: itens.filter(x => (x.categoria || "rendaFixa") === c.id) })).filter(g => g.itens.length > 0);
+
+  // Soma total dos alvos para mostrar aviso
+  const totalAlvo = Object.values(alvoLocal).reduce((s, v) => s + v, 0);
 
   if (wsLoading || carregando) return <div className="flex items-center justify-center h-40" style={{ color: "var(--text-muted)" }}>Carregando…</div>;
 
   return (
     <div className={inline ? "flex flex-col gap-4 py-4" : "max-w-2xl mx-auto px-4 py-4 flex flex-col gap-4"}>
+
       {/* Hero */}
       <div className="rounded-2xl px-5 py-5 flex flex-col gap-2" style={{ background: "linear-gradient(135deg,#1d5c4f,#2a8a72)" }}>
         <p className="text-xs font-medium uppercase tracking-wide" style={{ color: "rgba(255,255,255,0.8)" }}>Total investido</p>
@@ -415,31 +410,87 @@ export default function InvestimentosClient({ inline = false }: { inline?: boole
         </div>
       </div>
 
-      {/* Alocação atual × alvo */}
+      {/* Alocação atual × alvo — COM EDIÇÃO */}
       {pizzaData.length > 0 && (
         <div className="rounded-xl px-4 py-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <p className="text-sm font-semibold mb-3">Alocação atual × alvo</p>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-semibold">Alocação atual × alvo</p>
+            {editAlvo ? (
+              <div className="flex gap-2">
+                {totalAlvo !== 100 && (
+                  <span className="text-xs" style={{ color: totalAlvo > 100 ? "var(--danger)" : "var(--text-muted)" }}>
+                    Total: {totalAlvo}%
+                  </span>
+                )}
+                <button onClick={salvarAlvos}
+                  className="text-xs px-2.5 py-1 rounded-lg font-medium"
+                  style={{ background: "var(--primary)", color: "#fff" }}>
+                  Salvar
+                </button>
+                <button onClick={() => { setEditAlvo(false); setAlvoLocal(metas.alvo_pct as Record<string, number>); }}
+                  className="text-xs px-2 py-1 rounded-lg"
+                  style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                  Cancelar
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => { setEditAlvo(true); setAlvoLocal({ ...(metas.alvo_pct as Record<string, number>) }); }}
+                style={{ color: "var(--text-muted)" }}>
+                <Pencil size={14} />
+              </button>
+            )}
+          </div>
+
           <div className="flex flex-col gap-3">
-            {CATS.filter(c => porCat[c.id] || (metas.alvo_pct as Record<string, number>)[c.id]).map(c => {
+            {CATS.filter(c => porCat[c.id] || (metas.alvo_pct as Record<string, number>)[c.id] || alvoLocal[c.id]).map(c => {
               const pct = total ? ((porCat[c.id] || 0) / total) * 100 : 0;
-              const alvo = (metas.alvo_pct as Record<string, number>)[c.id] || 0;
+              const alvo = editAlvo ? (alvoLocal[c.id] || 0) : ((metas.alvo_pct as Record<string, number>)[c.id] || 0);
               return (
                 <div key={c.id}>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="flex items-center gap-1.5">
-                      <c.icon size={12} style={{ color: c.cor }} /> {c.nome}
+                  <div className="flex justify-between items-center text-xs mb-1 gap-2">
+                    <span className="flex items-center gap-1.5 flex-1 min-w-0">
+                      <c.icon size={12} style={{ color: c.cor, flexShrink: 0 }} />
+                      <span className="truncate">{c.nome}</span>
                     </span>
-                    <span>{pct.toFixed(1)}% <span style={{ color: "var(--text-muted)" }}>alvo {alvo}%</span></span>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <span style={{ color: pct > alvo + 5 ? "var(--danger)" : pct < alvo - 5 ? "#c9952d" : "#4caf82", fontWeight: 600 }}>
+                        {pct.toFixed(1)}%
+                      </span>
+                      <span style={{ color: "var(--text-muted)" }}>alvo</span>
+                      {editAlvo ? (
+                        <input
+                          type="number" min={0} max={100} step={1}
+                          value={alvoLocal[c.id] ?? 0}
+                          onChange={e => setAlvoLocal(a => ({ ...a, [c.id]: Number(e.target.value) }))}
+                          className="w-12 text-xs text-right outline-none rounded px-1 py-0.5"
+                          style={{ background: "var(--surface2)", border: "1px solid var(--primary)", color: "var(--text)" }}
+                        />
+                      ) : (
+                        <span style={{ color: "var(--text-muted)" }}>{alvo}%</span>
+                      )}
+                    </div>
                   </div>
                   <div className="relative h-2 rounded-full" style={{ background: "var(--surface2)" }}>
-                    <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${pct}%`, background: c.cor }} />
-                    {alvo > 0 && <div className="absolute inset-y-0 w-0.5 opacity-40" style={{ left: `${alvo}%`, background: "var(--text)" }} />}
+                    <div className="absolute inset-y-0 left-0 rounded-full transition-all" style={{ width: `${Math.min(pct, 100)}%`, background: c.cor }} />
+                    {alvo > 0 && (
+                      <div className="absolute inset-y-0 w-0.5 opacity-50" style={{ left: `${Math.min(alvo, 100)}%`, background: "var(--text)" }} />
+                    )}
                   </div>
                 </div>
               );
             })}
           </div>
-          <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>A linha vertical marca o alvo de alocação.</p>
+
+          {!editAlvo && (
+            <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>
+              🟢 dentro do alvo · 🟡 abaixo · 🔴 acima · linha vertical = alvo
+            </p>
+          )}
+          {editAlvo && (
+            <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>
+              Idealmente os alvos somam 100%. Clique em Salvar para confirmar.
+            </p>
+          )}
         </div>
       )}
 
