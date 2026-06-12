@@ -72,8 +72,10 @@ export async function POST(req: NextRequest) {
       tickers: { id: string; ticker: string; tipo: "br" | "ext" | "cripto" }[];
     };
 
+    // Sem tickers: ainda busca a PTAX (usado para atualização automática do dólar)
     if (!Array.isArray(tickers) || tickers.length === 0) {
-      return NextResponse.json({ resultados: [], ptax: null });
+      const ptax = await fetchPtax();
+      return NextResponse.json({ resultados: [], ptax });
     }
 
     // Montar os tickers Yahoo: BR = TICKER.SA, EXT = TICKER, cripto = TICKER-BRL
