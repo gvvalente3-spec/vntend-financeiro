@@ -14,6 +14,23 @@
   --warning: #c9952d;
 }
 
+/* Modo escuro automático (segue o sistema) */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0c1a17;
+    --surface: #132722;
+    --surface2: #1b342e;
+    --border: rgba(201,149,45,0.22);
+    --border-strong: rgba(201,149,45,0.45);
+    --text: #e8e4d8;
+    --text-muted: #93a39d;
+    --primary: #36a98c;
+    --primary-light: #2a8a72;
+    --danger: #d96a51;
+    --warning: #d9a83e;
+  }
+}
+
 * { box-sizing: border-box; }
 
 body {
