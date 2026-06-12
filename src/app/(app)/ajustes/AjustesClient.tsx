@@ -241,13 +241,27 @@ function Categorias({ workspaceId }: { workspaceId: string }) {
     sincronizar(c);
   }
 
-  function renameCat(oldNome: string, novoNome: string) {
+  async function renameCat(oldNome: string, novoNome: string) {
     if (!novoNome.trim() || novoNome === oldNome) { setRenomeando(null); return; }
     const c = clone();
     c[tipo][novoNome] = c[tipo][oldNome];
     delete c[tipo][oldNome];
     sincronizar(c);
     setRenomeando(null);
+
+    // Propaga o novo nome para o histórico — sem isso, lançamentos antigos
+    // ficariam "órfãos" apontando para a categoria com o nome antigo
+    const supabase = createClient();
+    await Promise.all([
+      supabase.from("lancamentos").update({ cat: novoNome } as Record<string, unknown>)
+        .eq("workspace_id", workspaceId).eq("tipo", tipo).eq("cat", oldNome),
+      supabase.from("recorrencias").update({ cat: novoNome } as Record<string, unknown>)
+        .eq("workspace_id", workspaceId).eq("tipo", tipo).eq("cat", oldNome),
+      supabase.from("orcamentos").update({ cat: novoNome } as Record<string, unknown>)
+        .eq("workspace_id", workspaceId).eq("cat", oldNome),
+      supabase.from("cat_meta").update({ chave: novoNome } as Record<string, unknown>)
+        .eq("workspace_id", workspaceId).eq("chave", oldNome),
+    ]);
   }
 
   function addSub(cat: string) {
