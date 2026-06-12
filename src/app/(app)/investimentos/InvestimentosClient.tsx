@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Plus, Trash2, Pencil, RefreshCw, Target, PiggyBank, Landmark, LineChart, Globe, Bitcoin, Shield, X, Info } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { createClient } from "@/lib/supabase/client";
@@ -52,14 +52,21 @@ function ganhoAtivo(a: Investimento, ptax: number) {
   return 0;
 }
 
-async function fetchCotacao(ticker: string): Promise<number | null> {
+// Infere o tipo do ticker p/ a API: cripto (BTC-BRL), exterior (VOO) ou BR (PETR4.SA)
+function tipoDoAtivo(a: { categoria?: string | null; moeda?: string | null }): "br" | "ext" | "cripto" {
+  if (a.categoria === "cripto") return "cripto";
+  if (a.categoria === "exterior" || a.moeda === "USD") return "ext";
+  return "br";
+}
+
+async function fetchCotacao(ticker: string, tipo: "br" | "ext" | "cripto" = "br"): Promise<number | null> {
   try {
     // Usa API Route interna — roda no servidor, sem CORS
     const res = await fetch("/api/cotacoes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        tickers: [{ id: "single", ticker, tipo: "br" }],
+        tickers: [{ id: "single", ticker, tipo }],
       }),
       signal: AbortSignal.timeout(12000),
     });
@@ -87,7 +94,7 @@ function Modal({ titulo, fechar, children }: { titulo: string; fechar: () => voi
 const inp = { background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 14 };
 const lbl = { display: "flex", flexDirection: "column" as const, gap: 4, fontSize: 13, color: "var(--text-muted)" };
 
-function FormAtivo({ workspaceId, fechar, onSalvo, inicial }: { workspaceId: string; fechar: () => void; onSalvo: () => void; inicial?: Investimento }) {
+function FormAtivo({ workspaceId, fechar, onSalvo, inicial, objetivos }: { workspaceId: string; fechar: () => void; onSalvo: () => void; inicial?: Investimento; objetivos: Objetivo[] }) {
   const [nome, setNome] = useState(inicial?.nome || "");
   const [ticker, setTicker] = useState(inicial?.ticker || "");
   const [categoria, setCategoria] = useState<CatId>((inicial?.categoria as CatId) || "rendaFixa");
@@ -140,9 +147,7 @@ function FormAtivo({ workspaceId, fechar, onSalvo, inicial }: { workspaceId: str
         <label style={{ ...lbl, flex: 1 }}>Objetivo
           <select value={obj} onChange={e => setObj(e.target.value)} style={inp}>
             <option value="">—</option>
-            <option value="reserva">Reserva emergência</option>
-            <option value="leilao">Fundo leilão</option>
-            <option value="aluguel27">Aluguel 2027</option>
+            {objetivos.map(o => <option key={o.id} value={o.id}>{o.emoji} {o.nome}</option>)}
           </select>
         </label>
       </div>
@@ -207,6 +212,8 @@ export default function InvestimentosClient({ inline = false }: { inline?: boole
   const [editando, setEditando] = useState<Investimento | null>(null);
   const [aportando, setAportando] = useState<Investimento | null>(null);
   const [buscando, setBuscando] = useState<Record<string, boolean>>({});
+  const [atualizando, setAtualizando] = useState(false);
+  const [ptaxAuto, setPtaxAuto] = useState(false);
   const [editMetas, setEditMetas] = useState(false);
   const [editAlvo, setEditAlvo] = useState(false);
   const [alvoLocal, setAlvoLocal] = useState<Record<string, number>>({});
@@ -243,11 +250,78 @@ export default function InvestimentosClient({ inline = false }: { inline?: boole
 
   async function buscarCotacao(id: string, ticker: string) {
     setBuscando(b => ({ ...b, [id]: true }));
-    const preco = await fetchCotacao(ticker);
+    const ativo = itens.find(x => x.id === id);
+    const preco = await fetchCotacao(ticker, ativo ? tipoDoAtivo(ativo) : "br");
     setBuscando(b => ({ ...b, [id]: false }));
     if (preco) {
       await createClient().from("investimentos").update({ preco_atual: preco } as Record<string, unknown>).eq("id", id);
       setItens(inv => inv.map(x => x.id === id ? { ...x, preco_atual: preco } : x));
+    }
+  }
+
+  // Atualiza PTAX automaticamente (Banco Central) e salva no workspace
+  const atualizarPtax = useCallback(async (ws: string) => {
+    try {
+      const res = await fetch("/api/cotacoes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tickers: [] }),
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const novaPtax = data?.ptax;
+      if (typeof novaPtax === "number" && novaPtax > 0) {
+        setMetas(m => {
+          if (Math.abs(Number(m.ptax) - novaPtax) < 0.0001) return m;
+          const novas = { ...m, ptax: novaPtax };
+          createClient().from("invest_metas").update({ ptax: novaPtax } as Record<string, unknown>).eq("workspace_id", ws);
+          return novas;
+        });
+        setPtaxAuto(true);
+      }
+    } catch { /* mantém valor manual em caso de falha */ }
+  }, []);
+
+  useEffect(() => {
+    if (workspaceId) atualizarPtax(workspaceId);
+  }, [workspaceId, atualizarPtax]);
+
+  // Atualiza todas as cotações + PTAX em uma chamada só
+  async function atualizarTudo() {
+    if (atualizando) return;
+    setAtualizando(true);
+    try {
+      const comTicker = itens.filter(x => x.ticker);
+      const res = await fetch("/api/cotacoes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tickers: comTicker.map(x => ({ id: x.id, ticker: x.ticker, tipo: tipoDoAtivo(x) })),
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const supabase = createClient();
+      const precos: Record<string, number> = {};
+      for (const r of (data?.resultados || [])) {
+        if (typeof r?.preco === "number" && r.preco > 0) {
+          precos[r.id] = r.preco;
+          await supabase.from("investimentos").update({ preco_atual: r.preco } as Record<string, unknown>).eq("id", r.id);
+        }
+      }
+      if (Object.keys(precos).length > 0) {
+        setItens(inv => inv.map(x => precos[x.id] ? { ...x, preco_atual: precos[x.id] } : x));
+      }
+      const novaPtax = data?.ptax;
+      if (typeof novaPtax === "number" && novaPtax > 0 && workspaceId) {
+        setMetas(m => ({ ...m, ptax: novaPtax }));
+        setPtaxAuto(true);
+        await supabase.from("invest_metas").update({ ptax: novaPtax } as Record<string, unknown>).eq("workspace_id", workspaceId);
+      }
+    } finally {
+      setAtualizando(false);
     }
   }
 
@@ -261,6 +335,17 @@ export default function InvestimentosClient({ inline = false }: { inline?: boole
     setObjetivos(novos);
     if (!workspaceId) return;
     await createClient().from("invest_metas").update({ objetivos_custom: novos } as Record<string, unknown>).eq("workspace_id", workspaceId);
+  }
+
+  // Edição de objetivo: atualiza a tela na hora, mas grava no banco com debounce (evita 1 gravação por tecla)
+  const salvarObjetivosTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function editObjetivoDebounced(novos: Objetivo[]) {
+    setObjetivos(novos);
+    if (salvarObjetivosTimer.current) clearTimeout(salvarObjetivosTimer.current);
+    salvarObjetivosTimer.current = setTimeout(() => {
+      if (!workspaceId) return;
+      createClient().from("invest_metas").update({ objetivos_custom: novos } as Record<string, unknown>).eq("workspace_id", workspaceId);
+    }, 600);
   }
 
   async function salvarAlvos() {
@@ -277,7 +362,7 @@ export default function InvestimentosClient({ inline = false }: { inline?: boole
 
   function editObjetivo(id: string, campo: keyof Objetivo, valor: string | number) {
     const novos = objetivos.map(o => o.id === id ? { ...o, [campo]: valor } : o);
-    salvarObjetivos(novos);
+    editObjetivoDebounced(novos);
   }
 
   function delObjetivo(id: string) {
@@ -308,13 +393,16 @@ export default function InvestimentosClient({ inline = false }: { inline?: boole
       <div className="rounded-2xl px-5 py-5 flex flex-col gap-2" style={{ background: "linear-gradient(135deg,#1d5c4f,#2a8a72)" }}>
         <p className="text-xs font-medium uppercase tracking-wide" style={{ color: "rgba(255,255,255,0.8)" }}>Total investido</p>
         <p className="text-4xl font-bold text-white">{brl(total)}</p>
-        <div className="flex items-center gap-2 mt-1">
+        <div className="flex items-center gap-2 mt-1 flex-wrap">
           <Info size={12} style={{ color: "rgba(255,255,255,0.6)" }} />
-          <span className="text-xs" style={{ color: "rgba(255,255,255,0.7)" }}>PTAX (R$/US$ p/ ativos em dólar)</span>
+          <span className="text-xs" style={{ color: "rgba(255,255,255,0.7)" }}>PTAX (R$/US$)</span>
           <input type="number" step="0.01" value={ptax}
-            onChange={e => salvarMetas({ ...metas, ptax: Number(e.target.value) })}
+            onChange={e => { setPtaxAuto(false); salvarMetas({ ...metas, ptax: Number(e.target.value) }); }}
             className="text-sm font-semibold rounded-lg px-2 py-1 w-20 outline-none ml-1"
             style={{ background: "rgba(255,255,255,0.15)", color: "#fff", border: "1px solid rgba(255,255,255,0.3)" }} />
+          <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: "rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.85)" }}>
+            {ptaxAuto ? "✓ automática (BC)" : "manual"}
+          </span>
         </div>
       </div>
 
@@ -487,11 +575,21 @@ export default function InvestimentosClient({ inline = false }: { inline?: boole
       {/* Ativos */}
       <div className="flex items-center justify-between">
         <h3 className="text-base font-semibold">Ativos</h3>
-        <button onClick={() => setForm(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium"
-          style={{ background: "var(--primary)", color: "#fff" }}>
-          <Plus size={16} /> Ativo
-        </button>
+        <div className="flex items-center gap-2">
+          {itens.some(x => x.ticker) && (
+            <button onClick={atualizarTudo} disabled={atualizando}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-60"
+              style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+              <RefreshCw size={14} className={atualizando ? "animate-spin" : ""} />
+              {atualizando ? "Atualizando…" : "Atualizar tudo"}
+            </button>
+          )}
+          <button onClick={() => setForm(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium"
+            style={{ background: "var(--primary)", color: "#fff" }}>
+            <Plus size={16} /> Ativo
+          </button>
+        </div>
       </div>
 
       {itens.length === 0 && (
@@ -518,7 +616,10 @@ export default function InvestimentosClient({ inline = false }: { inline?: boole
                     <div className="flex items-center gap-2 flex-wrap">
                       {a.ticker && <span className="text-sm font-bold">{a.ticker}</span>}
                       <span className="text-sm truncate" style={{ color: a.ticker ? "var(--text-muted)" : "var(--text)" }}>{a.nome}</span>
-                      {a.obj && <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: "var(--primary)", color: "#fff" }}>{a.obj}</span>}
+                      {a.obj && (() => {
+                        const o = objetivos.find(x => x.id === a.obj);
+                        return <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: "var(--primary)", color: "#fff" }}>{o ? `${o.emoji} ${o.nome}` : a.obj}</span>;
+                      })()}
                     </div>
                     {a.cotas && a.pm && (
                       <div className="flex gap-3 mt-1 flex-wrap text-xs" style={{ color: "var(--text-muted)" }}>
@@ -561,8 +662,8 @@ export default function InvestimentosClient({ inline = false }: { inline?: boole
         </div>
       ))}
 
-      {form && workspaceId && <FormAtivo workspaceId={workspaceId} fechar={() => setForm(false)} onSalvo={carregar} />}
-      {editando && workspaceId && <FormAtivo workspaceId={workspaceId} fechar={() => setEditando(null)} onSalvo={carregar} inicial={editando} />}
+      {form && workspaceId && <FormAtivo workspaceId={workspaceId} fechar={() => setForm(false)} onSalvo={carregar} objetivos={objetivos} />}
+      {editando && workspaceId && <FormAtivo workspaceId={workspaceId} fechar={() => setEditando(null)} onSalvo={carregar} inicial={editando} objetivos={objetivos} />}
       {aportando && <FormAporte ativo={aportando} fechar={() => setAportando(null)} onSalvo={carregar} ptax={ptax} />}
     </div>
   );
