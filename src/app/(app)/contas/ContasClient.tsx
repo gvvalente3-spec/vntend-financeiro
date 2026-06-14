@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Plus, Trash2, Pencil, ChevronDown, Wallet, CreditCard, ChevronLeft, ChevronRight, Check, X } from "lucide-react";
-import InvestimentosClient from "../investimentos/InvestimentosClient";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { brl, formatData, mesAtual, MESES, mesDoLanc } from "@/lib/utils";
@@ -147,7 +146,6 @@ export default function ContasClient() {
   const [cartoes, setCartoes] = useState<Cartao[]>([]);
   const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
   const [carregando, setCarregando] = useState(true);
-  const [vista, setVista] = useState<"contas" | "investimentos">("contas");
   const [mes, setMes] = useState(mesAtual());
   const [cartaoAberto, setCartaoAberto] = useState<string | null>(null);
   const [formConta, setFormConta] = useState(false);
@@ -163,7 +161,6 @@ export default function ContasClient() {
     const [{ data: cts }, { data: carts }, { data: lancs }] = await Promise.all([
       supabase.from("contas").select("*").eq("workspace_id", workspaceId).order("created_at"),
       supabase.from("cartoes").select("*").eq("workspace_id", workspaceId).order("created_at"),
-      // Busca todos os lançamentos de cartão (pago ou não) para filtrar por mês
       supabase.from("lancamentos").select("*").eq("workspace_id", workspaceId)
         .not("cartao_id", "is", null).order("data", { ascending: false }),
     ]);
@@ -213,7 +210,6 @@ export default function ContasClient() {
   const labelMes = `${MESES[mesNum - 1]}/${ano}`;
   const saldoTotal = contas.reduce((s, c) => s + Number(c.saldo), 0);
 
-  // Itens de fatura filtrados pelo mês selecionado
   const itensMes = (cartaoId: string) =>
     lancamentos.filter(l => l.cartao_id === cartaoId && mesDoLanc(l.data) === mes)
       .sort((a, b) => a.data < b.data ? 1 : -1);
@@ -224,188 +220,171 @@ export default function ContasClient() {
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-4 flex flex-col gap-4">
-      {/* Segmented control */}
-      <div className="flex rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
-        {(["contas", "investimentos"] as const).map(v => (
-          <button key={v} onClick={() => setVista(v)}
-            className="flex-1 py-2 text-sm font-medium transition-colors"
-            style={{ background: vista === v ? "var(--primary)" : "transparent", color: vista === v ? "#fff" : "var(--text-muted)" }}>
-            {v === "contas" ? "Contas & Cartões" : "Investimentos"}
-          </button>
-        ))}
+
+      {/* ——— CONTAS ——— */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Contas</h2>
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+            Saldo total: <span style={{ color: saldoTotal >= 0 ? "#4caf82" : "var(--danger)" }}>{brl(saldoTotal)}</span>
+          </p>
+        </div>
+        <button onClick={() => setFormConta(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium"
+          style={{ background: "var(--primary)", color: "#fff" }}>
+          <Plus size={16} /> Conta
+        </button>
       </div>
 
-      {vista === "investimentos" && <InvestimentosClient inline />}
-
-      {vista === "contas" && (<>
-        {/* ——— CONTAS ——— */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold">Contas</h2>
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Saldo total: <span style={{ color: saldoTotal >= 0 ? "#4caf82" : "var(--danger)" }}>{brl(saldoTotal)}</span>
-            </p>
-          </div>
-          <button onClick={() => setFormConta(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium"
-            style={{ background: "var(--primary)", color: "#fff" }}>
-            <Plus size={16} /> Conta
-          </button>
-        </div>
-
-        {contas.length === 0 ? (
-          <p className="text-sm text-center py-6" style={{ color: "var(--text-muted)" }}>Cadastre suas contas para acompanhar o saldo.</p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {contas.map(c => (
-              <div key={c.id} className="flex items-center gap-3 rounded-xl px-4 py-3"
-                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-                <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "var(--surface2)" }}>
-                  <Wallet size={18} style={{ color: "var(--primary-light)" }} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium">{c.nome}</p>
-                  <p className="text-xs capitalize" style={{ color: "var(--text-muted)" }}>{c.tipo}</p>
-                </div>
-                <span className="text-sm font-semibold" style={{ color: Number(c.saldo) < 0 ? "var(--danger)" : "#4caf82" }}>
-                  {brl(c.saldo)}
-                </span>
-                <button onClick={() => setEditConta(c)} style={{ color: "var(--text-muted)" }}><Pencil size={14} /></button>
-                <button onClick={() => delConta(c.id)} style={{ color: "var(--text-muted)" }}><Trash2 size={14} /></button>
+      {contas.length === 0 ? (
+        <p className="text-sm text-center py-6" style={{ color: "var(--text-muted)" }}>Cadastre suas contas para acompanhar o saldo.</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {contas.map(c => (
+            <div key={c.id} className="flex items-center gap-3 rounded-xl px-4 py-3"
+              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "var(--surface2)" }}>
+                <Wallet size={18} style={{ color: "var(--primary-light)" }} />
               </div>
-            ))}
-          </div>
-        )}
-
-        {/* ——— CARTÕES ——— */}
-        <div className="flex items-center justify-between mt-2">
-          <h2 className="text-lg font-semibold">Cartões</h2>
-          <button onClick={() => setFormCartao(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium"
-            style={{ background: "var(--primary)", color: "#fff" }}>
-            <Plus size={16} /> Cartão
-          </button>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium">{c.nome}</p>
+                <p className="text-xs capitalize" style={{ color: "var(--text-muted)" }}>{c.tipo}</p>
+              </div>
+              <span className="text-sm font-semibold" style={{ color: Number(c.saldo) < 0 ? "var(--danger)" : "#4caf82" }}>
+                {brl(c.saldo)}
+              </span>
+              <button onClick={() => setEditConta(c)} style={{ color: "var(--text-muted)" }}><Pencil size={14} /></button>
+              <button onClick={() => delConta(c.id)} style={{ color: "var(--text-muted)" }}><Trash2 size={14} /></button>
+            </div>
+          ))}
         </div>
+      )}
 
-        {/* Seletor de mês das faturas */}
-        <div className="flex items-center justify-between rounded-xl px-4 py-2.5"
-          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <button onClick={() => mudarMes(-1)} style={{ color: "var(--text-muted)" }}><ChevronLeft size={20} /></button>
-          <div className="text-center">
-            <p className="text-sm font-medium capitalize">{labelMes}</p>
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>faturas do mês</p>
-          </div>
-          <button onClick={() => mudarMes(1)} style={{ color: "var(--text-muted)" }}><ChevronRight size={20} /></button>
+      {/* ——— CARTÕES ——— */}
+      <div className="flex items-center justify-between mt-2">
+        <h2 className="text-lg font-semibold">Cartões</h2>
+        <button onClick={() => setFormCartao(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium"
+          style={{ background: "var(--primary)", color: "#fff" }}>
+          <Plus size={16} /> Cartão
+        </button>
+      </div>
+
+      {/* Seletor de mês das faturas */}
+      <div className="flex items-center justify-between rounded-xl px-4 py-2.5"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+        <button onClick={() => mudarMes(-1)} style={{ color: "var(--text-muted)" }}><ChevronLeft size={20} /></button>
+        <div className="text-center">
+          <p className="text-sm font-medium capitalize">{labelMes}</p>
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>faturas do mês</p>
         </div>
+        <button onClick={() => mudarMes(1)} style={{ color: "var(--text-muted)" }}><ChevronRight size={20} /></button>
+      </div>
 
-        {cartoes.length === 0 ? (
-          <p className="text-sm text-center py-6" style={{ color: "var(--text-muted)" }}>Cadastre seus cartões para somar as faturas abertas.</p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {cartoes.map(c => {
-              const itens = itensMes(c.id);
-              const fatura = itens.reduce((s, l) => s + Number(l.valor), 0);
-              const todaoPaga = itens.length > 0 && itens.every(l => l.pago);
-              const algumAberto = itens.some(l => !l.pago);
-              const aberto = cartaoAberto === c.id;
+      {cartoes.length === 0 ? (
+        <p className="text-sm text-center py-6" style={{ color: "var(--text-muted)" }}>Cadastre seus cartões para somar as faturas abertas.</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {cartoes.map(c => {
+            const itens = itensMes(c.id);
+            const fatura = itens.reduce((s, l) => s + Number(l.valor), 0);
+            const todaoPaga = itens.length > 0 && itens.every(l => l.pago);
+            const algumAberto = itens.some(l => !l.pago);
+            const aberto = cartaoAberto === c.id;
 
-              return (
-                <div key={c.id} className="rounded-xl overflow-hidden"
-                  style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-                  {/* Header do cartão */}
-                  <div className="flex items-center gap-3 px-4 py-3 cursor-pointer"
-                    onClick={() => setCartaoAberto(a => a === c.id ? null : c.id)}>
-                    <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "var(--surface2)" }}>
-                      <CreditCard size={18} style={{ color: "var(--warning)" }} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">{c.nome}</p>
-                      <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                        vence dia {c.venc || "—"} · limite {brl(c.limite)}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {todaoPaga && (
-                        <span className="text-xs px-2 py-0.5 rounded-full flex items-center gap-1"
-                          style={{ background: "rgba(42,138,114,0.15)", color: "var(--primary)" }}>
-                          <Check size={11} /> paga
-                        </span>
-                      )}
-                      <span className="text-sm font-semibold"
-                        style={{ color: fatura > 0 ? (todaoPaga ? "var(--text-muted)" : "var(--danger)") : "var(--text-muted)" }}>
-                        {fatura > 0 ? `${todaoPaga ? "" : "−"}${brl(fatura)}` : brl(0)}
-                      </span>
-                      <ChevronDown size={16} style={{ color: "var(--text-muted)", transform: aberto ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
-                    </div>
-                    <button onClick={e => { e.stopPropagation(); setEditCartao(c); }} style={{ color: "var(--text-muted)" }}><Pencil size={14} /></button>
-                    <button onClick={e => { e.stopPropagation(); delCartao(c.id); }} style={{ color: "var(--text-muted)" }}><Trash2 size={14} /></button>
+            return (
+              <div key={c.id} className="rounded-xl overflow-hidden"
+                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                <div className="flex items-center gap-3 px-4 py-3 cursor-pointer"
+                  onClick={() => setCartaoAberto(a => a === c.id ? null : c.id)}>
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "var(--surface2)" }}>
+                    <CreditCard size={18} style={{ color: "var(--warning)" }} />
                   </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium">{c.nome}</p>
+                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                      vence dia {c.venc || "—"} · limite {brl(c.limite)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {todaoPaga && (
+                      <span className="text-xs px-2 py-0.5 rounded-full flex items-center gap-1"
+                        style={{ background: "rgba(42,138,114,0.15)", color: "var(--primary)" }}>
+                        <Check size={11} /> paga
+                      </span>
+                    )}
+                    <span className="text-sm font-semibold"
+                      style={{ color: fatura > 0 ? (todaoPaga ? "var(--text-muted)" : "var(--danger)") : "var(--text-muted)" }}>
+                      {fatura > 0 ? `${todaoPaga ? "" : "−"}${brl(fatura)}` : brl(0)}
+                    </span>
+                    <ChevronDown size={16} style={{ color: "var(--text-muted)", transform: aberto ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
+                  </div>
+                  <button onClick={e => { e.stopPropagation(); setEditCartao(c); }} style={{ color: "var(--text-muted)" }}><Pencil size={14} /></button>
+                  <button onClick={e => { e.stopPropagation(); delCartao(c.id); }} style={{ color: "var(--text-muted)" }}><Trash2 size={14} /></button>
+                </div>
 
-                  {/* Fatura expandida */}
-                  {aberto && (
-                    <div className="border-t px-4 pb-3 pt-2 flex flex-col gap-2" style={{ borderColor: "var(--border)" }}>
-                      <div className="flex items-center justify-between">
-                        <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                          {itens.length} item(s) · {labelMes}
-                          {todaoPaga && <span style={{ color: "var(--primary)" }}> · fatura paga ✓</span>}
-                        </p>
-                        {algumAberto && fatura > 0 && (
-                          <button onClick={() => toggleFatura(c.id, true)}
-                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium"
-                            style={{ background: "var(--primary)", color: "#fff" }}>
-                            <Check size={12} /> Pagar fatura
-                          </button>
-                        )}
-                        {todaoPaga && (
-                          <button onClick={() => toggleFatura(c.id, false)}
-                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium"
-                            style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-                            <X size={12} /> Desmarcar
-                          </button>
-                        )}
-                      </div>
-
-                      {itens.length === 0 ? (
-                        <p className="text-xs py-2" style={{ color: "var(--text-muted)" }}>Sem lançamentos neste mês.</p>
-                      ) : itens.map(l => (
-                        <div key={l.id} className="flex items-center gap-2 rounded-lg px-3 py-2"
-                          style={{ background: l.pago ? "rgba(42,138,114,0.07)" : "var(--surface2)", border: `1px solid ${l.pago ? "rgba(42,138,114,0.2)" : "var(--border)"}` }}>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm truncate" style={{ textDecoration: l.pago ? "line-through" : "none", color: l.pago ? "var(--text-muted)" : "var(--text)" }}>
-                              {l.descricao || "Despesa"}
-                            </p>
-                            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                              {l.cat}{l.sub ? ` › ${l.sub}` : ""} · {formatData(l.data)}
-                              {l.pago && " · pago"}
-                            </p>
-                          </div>
-                          <span className="text-sm font-semibold flex-shrink-0"
-                            style={{ color: l.pago ? "var(--text-muted)" : "var(--danger)" }}>
-                            −{brl(l.valor)}
-                          </span>
-                          <button onClick={() => setEditItem(l)} style={{ color: "var(--text-muted)" }}><Pencil size={13} /></button>
-                          <button onClick={() => delItem(l.id)} style={{ color: "var(--text-muted)" }}><Trash2 size={13} /></button>
-                        </div>
-                      ))}
-
-                      {/* Total da fatura */}
-                      {itens.length > 0 && (
-                        <div className="flex justify-between pt-1 border-t text-sm font-semibold"
-                          style={{ borderColor: "var(--border)" }}>
-                          <span>Total</span>
-                          <span style={{ color: todaoPaga ? "var(--text-muted)" : "var(--danger)" }}>
-                            −{brl(fatura)}
-                          </span>
-                        </div>
+                {aberto && (
+                  <div className="border-t px-4 pb-3 pt-2 flex flex-col gap-2" style={{ borderColor: "var(--border)" }}>
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                        {itens.length} item(s) · {labelMes}
+                        {todaoPaga && <span style={{ color: "var(--primary)" }}> · fatura paga ✓</span>}
+                      </p>
+                      {algumAberto && fatura > 0 && (
+                        <button onClick={() => toggleFatura(c.id, true)}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium"
+                          style={{ background: "var(--primary)", color: "#fff" }}>
+                          <Check size={12} /> Pagar fatura
+                        </button>
+                      )}
+                      {todaoPaga && (
+                        <button onClick={() => toggleFatura(c.id, false)}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium"
+                          style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                          <X size={12} /> Desmarcar
+                        </button>
                       )}
                     </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </>)}
+
+                    {itens.length === 0 ? (
+                      <p className="text-xs py-2" style={{ color: "var(--text-muted)" }}>Sem lançamentos neste mês.</p>
+                    ) : itens.map(l => (
+                      <div key={l.id} className="flex items-center gap-2 rounded-lg px-3 py-2"
+                        style={{ background: l.pago ? "rgba(42,138,114,0.07)" : "var(--surface2)", border: `1px solid ${l.pago ? "rgba(42,138,114,0.2)" : "var(--border)"}` }}>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm truncate" style={{ textDecoration: l.pago ? "line-through" : "none", color: l.pago ? "var(--text-muted)" : "var(--text)" }}>
+                            {l.descricao || "Despesa"}
+                          </p>
+                          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                            {l.cat}{l.sub ? ` › ${l.sub}` : ""} · {formatData(l.data)}
+                            {l.pago && " · pago"}
+                          </p>
+                        </div>
+                        <span className="text-sm font-semibold flex-shrink-0"
+                          style={{ color: l.pago ? "var(--text-muted)" : "var(--danger)" }}>
+                          −{brl(l.valor)}
+                        </span>
+                        <button onClick={() => setEditItem(l)} style={{ color: "var(--text-muted)" }}><Pencil size={13} /></button>
+                        <button onClick={() => delItem(l.id)} style={{ color: "var(--text-muted)" }}><Trash2 size={13} /></button>
+                      </div>
+                    ))}
+
+                    {itens.length > 0 && (
+                      <div className="flex justify-between pt-1 border-t text-sm font-semibold"
+                        style={{ borderColor: "var(--border)" }}>
+                        <span>Total</span>
+                        <span style={{ color: todaoPaga ? "var(--text-muted)" : "var(--danger)" }}>
+                          −{brl(fatura)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Modais */}
       {formConta && workspaceId && <FormConta workspaceId={workspaceId} fechar={() => setFormConta(false)} onSalvo={carregar} />}
