@@ -1,170 +1,343 @@
 "use client";
 
-import { useState } from "react";
-import { FileText, X } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { X, Plus, Pencil, Trash2, ChevronLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { brl, mesAtual, MESES } from "@/lib/utils";
+import type { Contracheque } from "@/types/database";
 
-const inp = { background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 14 };
+const inp = {
+  background: "var(--surface2)", border: "1px solid var(--border)",
+  color: "var(--text)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 14,
+};
 const lbl = { display: "flex", flexDirection: "column" as const, gap: 4, fontSize: 13, color: "var(--text-muted)" };
 
-export default function RegistrarContracheque({ workspaceId, fechar, onSalvo }: {
-  workspaceId: string; fechar: () => void; onSalvo: () => void;
+function nomeMes(mes: string) {
+  const [ano, mm] = mes.split("-").map(Number);
+  return `${MESES[mm - 1]}/${ano}`;
+}
+
+// ——— Formulário de registro/edição ———
+function FormContracheque({ workspaceId, inicial, onSalvo, onVoltar }: {
+  workspaceId: string;
+  inicial?: Contracheque | null;
+  onSalvo: () => void;
+  onVoltar: () => void;
 }) {
-  const [mes, setMes] = useState(mesAtual());
-  const [tributavel, setTributavel] = useState("");
-  const [previdencia, setPrevidencia] = useState("");
-  const [irRetido, setIrRetido] = useState("");
-  const [arquivo, setArquivo] = useState<File | null>(null);
-  const [extraindo, setExtraindo] = useState(false);
+  const [mes, setMes] = useState(inicial?.mes || mesAtual());
+  const [tributavel, setTributavel] = useState(inicial ? String(inicial.tributavel) : "");
+  const [fusex, setFusex] = useState(inicial?.fusex != null ? String(inicial.fusex) : "");
+  const [pensao, setPensao] = useState(inicial?.pensao != null ? String(inicial.pensao) : "");
+  const [despesaMedica, setDespesaMedica] = useState(inicial ? String(inicial.despesa_medica || 0) : "0");
+  const [outrosDescontos, setOutrosDescontos] = useState(inicial ? String(inicial.outros_descontos || 0) : "0");
+  const [receitasIsentas, setReceitasIsentas] = useState(inicial ? String(inicial.receitas_isentas || 0) : "0");
+  const [irRetido, setIrRetido] = useState(inicial ? String(inicial.ir_retido) : "");
   const [salvando, setSalvando] = useState(false);
-  const [msg, setMsg] = useState("");
 
-  const [mAno, mNum] = mes.split("-").map(Number);
-  const nomeMes = mes ? `${MESES[mNum - 1]}/${mAno}` : "";
-
-  async function tentarExtrairPDF(f: File) {
-    setExtraindo(true);
-    setMsg("Tentando extrair do PDF…");
-    try {
-      // Carrega pdf.js via CDN dinamicamente
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let pdfjsLib: any = (window as any).pdfjsLib;
-      if (!pdfjsLib) {
-        await new Promise<void>((res, rej) => {
-          const s = document.createElement("script");
-          s.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-          s.onload = () => res(); s.onerror = rej;
-          document.head.appendChild(s);
-        });
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        pdfjsLib = (window as any).pdfjsLib;
-      }
-      if (!pdfjsLib) { setMsg("pdf.js indisponível — preencha manualmente."); setExtraindo(false); return; }
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
-      const buf = await f.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-      let texto = "";
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const pg = await pdf.getPage(i);
-        const tc = await pg.getTextContent();
-        texto += " " + (tc.items as Array<{ str: string }>).map(it => it.str).join(" ");
-      }
-      // Extrai IR
-      const irMatch = texto.match(/IMPOSTO DE RENDA[^\d-]*([\d.]+,\d{2})/i);
-      if (irMatch) setIrRetido(irMatch[1].replace(/\./g, "").replace(",", "."));
-      // Extrai tributável (base IR)
-      const baseMatch = texto.match(/BASE DE CALCULO[^\d]*([\d.]+,\d{2})/i) || texto.match(/TRIBUTAVEL[^\d]*([\d.]+,\d{2})/i);
-      if (baseMatch) setTributavel(baseMatch[1].replace(/\./g, "").replace(",", "."));
-      // Extrai previdência (FuSEx + Pensão)
-      const prevMatch = texto.match(/PREVIDENCIA[^\d]*([\d.]+,\d{2})/i) || texto.match(/FUSE[^\d]*([\d.]+,\d{2})/i);
-      if (prevMatch) setPrevidencia(prevMatch[1].replace(/\./g, "").replace(",", "."));
-      // Extrai mês
-      const mmMatch = texto.match(/M[ÊE]S\s+([A-ZÇÃÉ]+)\s*\/\s*(\d{4})/i);
-      if (mmMatch) {
-        const nomesMap: Record<string, string> = {
-          "JAN": "01","FEV": "02","MAR": "03","ABR": "04","MAI": "05","JUN": "06",
-          "JUL": "07","AGO": "08","SET": "09","OUT": "10","NOV": "11","DEZ": "12",
-        };
-        const mn = mmMatch[1].slice(0, 3).toUpperCase();
-        if (nomesMap[mn]) setMes(`${mmMatch[2]}-${nomesMap[mn]}`);
-      }
-      setMsg(irMatch || baseMatch ? "✓ Extração parcial — confira os valores." : "Não encontrei os valores automaticamente — preencha manualmente.");
-    } catch {
-      setMsg("Falha na extração — preencha manualmente.");
-    }
-    setExtraindo(false);
-  }
-
-  function onFilePDF(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setArquivo(f);
-    tentarExtrairPDF(f);
-  }
+  // Calcula previdência e líquido em tempo real
+  const previdencia = (Number(fusex) || 0) + (Number(pensao) || 0);
+  const liquido = (Number(tributavel) || 0)
+    + (Number(receitasIsentas) || 0)
+    - previdencia
+    - (Number(despesaMedica) || 0)
+    - (Number(outrosDescontos) || 0)
+    - (Number(irRetido) || 0);
 
   async function salvar() {
     if (!mes || !tributavel) return;
     setSalvando(true);
     const supabase = createClient();
-    await supabase.from("contracheques").upsert({
+    const payload = {
       workspace_id: workspaceId,
       mes,
       tributavel: Number(tributavel) || 0,
-      previdencia: Number(previdencia) || 0,
+      previdencia: previdencia || Number(inicial?.previdencia) || 0,
+      fusex: fusex ? Number(fusex) : null,
+      pensao: pensao ? Number(pensao) : null,
+      despesa_medica: Number(despesaMedica) || 0,
+      outros_descontos: Number(outrosDescontos) || 0,
+      receitas_isentas: Number(receitasIsentas) || 0,
       ir_retido: Number(irRetido) || 0,
-      arquivo: arquivo?.name || null,
-    } as Record<string, unknown>, { onConflict: "workspace_id,mes" });
+      arquivo: null,
+    } as Record<string, unknown>;
+
+    if (inicial?.id) {
+      await supabase.from("contracheques").update(payload).eq("id", inicial.id);
+    } else {
+      await supabase.from("contracheques").upsert(payload, { onConflict: "workspace_id,mes" });
+    }
     onSalvo();
-    fechar();
+    onVoltar();
     setSalvando(false);
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ background: "rgba(0,0,0,0.5)" }} onClick={fechar}>
-      <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 flex flex-col gap-4 max-h-[90vh] overflow-y-auto"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-        onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold">Registrar contracheque</h3>
-          <button onClick={fechar} style={{ color: "var(--text-muted)" }}><X size={20} /></button>
-        </div>
-
-        <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-          Registre os valores do contracheque oficial (PDF do CPEx) para o acompanhamento de IR ser preciso.
+    <div className="flex flex-col gap-3">
+      {/* Header com botão voltar */}
+      <div className="flex items-center gap-2">
+        <button onClick={onVoltar} style={{ color: "var(--text-muted)" }}>
+          <ChevronLeft size={20} />
+        </button>
+        <p className="text-sm font-semibold">
+          {inicial ? `Editar — ${nomeMes(inicial.mes)}` : "Novo contracheque"}
         </p>
+      </div>
 
-        {/* Upload PDF */}
-        <label className="flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer"
-          style={{ background: "var(--surface2)", border: "1px dashed var(--border)" }}>
-          <FileText size={20} style={{ color: "var(--primary)" }} />
-          <div className="flex-1">
-            <p className="text-sm font-medium">{arquivo ? arquivo.name : "Selecionar PDF do CPEx (opcional)"}</p>
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-              {extraindo ? "Extraindo…" : msg || "Tentará extrair os valores automaticamente"}
-            </p>
-          </div>
-          <input type="file" accept=".pdf" className="hidden" onChange={onFilePDF} />
+      <label style={lbl}>
+        Mês de referência
+        <input type="month" value={mes} onChange={e => setMes(e.target.value)} style={inp} disabled={!!inicial} />
+      </label>
+
+      {/* ——— RECEITAS ——— */}
+      <div className="rounded-xl p-3 flex flex-col gap-2.5" style={{ background: "rgba(42,138,114,0.06)", border: "1px solid rgba(42,138,114,0.2)" }}>
+        <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--primary)" }}>Receitas do contracheque</p>
+
+        <label style={lbl}>
+          Rendimento tributável (R$)
+          <input type="number" step="0.01" value={tributavel} onChange={e => setTributavel(e.target.value)}
+            placeholder="Ex: 19.852,24" style={inp} />
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>Base de cálculo do IR — campo "Rendimento Tributável" do CPEx</span>
         </label>
 
         <label style={lbl}>
-          Mês de referência
-          <input type="month" value={mes} onChange={e => setMes(e.target.value)} style={inp} />
+          Receitas isentas (R$) — aux. fardamento, diárias, aux. alimentação…
+          <input type="number" step="0.01" value={receitasIsentas} onChange={e => setReceitasIsentas(e.target.value)}
+            placeholder="0,00" style={inp} />
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>Não entram na base do IR mas compõem o líquido</span>
         </label>
+      </div>
 
-        {nomeMes && <p className="text-xs font-medium" style={{ color: "var(--primary)" }}>→ {nomeMes}</p>}
+      {/* ——— DESCONTOS ——— */}
+      <div className="rounded-xl p-3 flex flex-col gap-2.5" style={{ background: "rgba(192,73,47,0.05)", border: "1px solid rgba(192,73,47,0.15)" }}>
+        <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--danger)" }}>Descontos do contracheque</p>
 
-        <div className="grid grid-cols-1 gap-3">
+        <div className="grid grid-cols-2 gap-2">
           <label style={lbl}>
-            Rendimento tributável (R$)
-            <input type="number" step="0.01" value={tributavel} onChange={e => setTributavel(e.target.value)}
-              placeholder="Ex: 19.852,24" style={inp} />
+            FuSEx (R$)
+            <input type="number" step="0.01" value={fusex} onChange={e => setFusex(e.target.value)}
+              placeholder="0,00" style={inp} />
           </label>
           <label style={lbl}>
-            Previdência (FuSEx + Pensão, R$)
-            <input type="number" step="0.01" value={previdencia} onChange={e => setPrevidencia(e.target.value)}
-              placeholder="Ex: 2.680,06" style={inp} />
-          </label>
-          <label style={lbl}>
-            IR retido na fonte (R$)
-            <input type="number" step="0.01" value={irRetido} onChange={e => setIrRetido(e.target.value)}
-              placeholder="Ex: 4.910,98" style={inp} />
+            Pensão Militar (R$)
+            <input type="number" step="0.01" value={pensao} onChange={e => setPensao(e.target.value)}
+              placeholder="0,00" style={inp} />
           </label>
         </div>
-
-        {tributavel && irRetido && (
-          <div className="rounded-lg px-3 py-2 text-xs" style={{ background: "var(--surface2)", color: "var(--text-muted)" }}>
-            Tributável: <b style={{ color: "var(--text)" }}>{brl(Number(tributavel))}</b>
-            {" · "}IR: <b style={{ color: "var(--danger)" }}>{brl(Number(irRetido))}</b>
-            {previdencia && <>{" · "}Prev: <b style={{ color: "var(--text)" }}>{brl(Number(previdencia))}</b></>}
-          </div>
+        {previdencia > 0 && (
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+            Previdência total: <b style={{ color: "var(--text)" }}>{brl(previdencia)}</b> (FuSEx + Pensão — deduzível do IR)
+          </p>
         )}
 
-        <button onClick={salvar} disabled={salvando || !mes || !tributavel}
-          className="py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
-          style={{ background: "var(--primary)", color: "#fff" }}>
-          {salvando ? "Salvando…" : "Salvar contracheque"}
-        </button>
+        <label style={lbl}>
+          Despesa Médica FuSEx (R$) — ND0013
+          <input type="number" step="0.01" value={despesaMedica} onChange={e => setDespesaMedica(e.target.value)}
+            placeholder="0,00" style={inp} />
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>Não incide IR, só reduz o líquido</span>
+        </label>
+
+        <label style={lbl}>
+          Outros descontos (R$) — FHE, empréstimos, FPHMMLO…
+          <input type="number" step="0.01" value={outrosDescontos} onChange={e => setOutrosDescontos(e.target.value)}
+            placeholder="0,00" style={inp} />
+        </label>
+
+        <label style={lbl}>
+          Imposto de Renda retido (R$)
+          <input type="number" step="0.01" value={irRetido} onChange={e => setIrRetido(e.target.value)}
+            placeholder="0,00" style={inp} />
+        </label>
+      </div>
+
+      {/* ——— PREVIEW LÍQUIDO ——— */}
+      {tributavel && (
+        <div className="rounded-xl px-4 py-3" style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold">Líquido calculado</p>
+            <p className="text-lg font-bold" style={{ color: liquido >= 0 ? "#4caf82" : "var(--danger)" }}>
+              {brl(liquido)}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1">
+            <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+              Tributável <span style={{ color: "#4caf82" }}>{brl(Number(tributavel))}</span>
+            </span>
+            {Number(receitasIsentas) > 0 && (
+              <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                + Isentas <span style={{ color: "#4caf82" }}>{brl(Number(receitasIsentas))}</span>
+              </span>
+            )}
+            {previdencia > 0 && (
+              <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                − Prev. <span style={{ color: "var(--danger)" }}>{brl(previdencia)}</span>
+              </span>
+            )}
+            {Number(despesaMedica) > 0 && (
+              <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                − Desp. Med. <span style={{ color: "var(--danger)" }}>{brl(Number(despesaMedica))}</span>
+              </span>
+            )}
+            {Number(outrosDescontos) > 0 && (
+              <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                − Outros <span style={{ color: "var(--danger)" }}>{brl(Number(outrosDescontos))}</span>
+              </span>
+            )}
+            {Number(irRetido) > 0 && (
+              <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                − IR <span style={{ color: "var(--danger)" }}>{brl(Number(irRetido))}</span>
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      <button onClick={salvar} disabled={salvando || !mes || !tributavel}
+        className="py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
+        style={{ background: "var(--primary)", color: "#fff" }}>
+        {salvando ? "Salvando…" : inicial ? "Salvar alterações" : "Registrar contracheque"}
+      </button>
+    </div>
+  );
+}
+
+// ——— Componente principal (modal) ———
+export default function RegistrarContracheque({ workspaceId, fechar, onSalvo }: {
+  workspaceId: string; fechar: () => void; onSalvo: () => void;
+}) {
+  const [lista, setLista] = useState<Contracheque[]>([]);
+  const [carregando, setCarregando] = useState(true);
+  const [editando, setEditando] = useState<Contracheque | "novo" | null>(null);
+
+  const carregarLista = useCallback(async () => {
+    setCarregando(true);
+    const { data } = await createClient()
+      .from("contracheques")
+      .select("*")
+      .eq("workspace_id", workspaceId)
+      .order("mes", { ascending: false });
+    setLista((data || []) as unknown as Contracheque[]);
+    setCarregando(false);
+  }, [workspaceId]);
+
+  useEffect(() => { carregarLista(); }, [carregarLista]);
+
+  async function deletar(id: string) {
+    if (!confirm("Remover este contracheque?")) return;
+    await createClient().from("contracheques").delete().eq("id", id);
+    setLista(l => l.filter(x => x.id !== id));
+    onSalvo();
+  }
+
+  function handleSalvo() {
+    carregarLista();
+    onSalvo();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ background: "rgba(0,0,0,0.5)" }} onClick={fechar}>
+      <div
+        className="w-full max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col max-h-[92vh]"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: "var(--border)" }}>
+          <h3 className="font-semibold">Contracheques registrados</h3>
+          <button onClick={fechar} style={{ color: "var(--text-muted)" }}><X size={20} /></button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 p-4 flex flex-col gap-4">
+
+          {/* ——— MODO FORMULÁRIO ——— */}
+          {editando !== null ? (
+            <FormContracheque
+              workspaceId={workspaceId}
+              inicial={editando === "novo" ? null : editando}
+              onSalvo={handleSalvo}
+              onVoltar={() => setEditando(null)}
+            />
+          ) : (
+            <>
+              {/* Botão novo */}
+              <button
+                onClick={() => setEditando("novo")}
+                className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
+                style={{ background: "var(--primary)", color: "#fff" }}
+              >
+                <Plus size={16} /> Registrar novo mês
+              </button>
+
+              {/* ——— LISTA ——— */}
+              {carregando ? (
+                <p className="text-sm text-center py-6" style={{ color: "var(--text-muted)" }}>Carregando…</p>
+              ) : lista.length === 0 ? (
+                <p className="text-sm text-center py-6" style={{ color: "var(--text-muted)" }}>
+                  Nenhum contracheque registrado ainda. Registre o primeiro mês para o IR ficar preciso.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {lista.map(cc => {
+                    const previdencia = cc.fusex != null && cc.pensao != null
+                      ? Number(cc.fusex) + Number(cc.pensao)
+                      : Number(cc.previdencia);
+                    const liquido = Number(cc.tributavel)
+                      + Number(cc.receitas_isentas || 0)
+                      - previdencia
+                      - Number(cc.despesa_medica || 0)
+                      - Number(cc.outros_descontos || 0)
+                      - Number(cc.ir_retido);
+
+                    return (
+                      <div key={cc.id} className="rounded-xl px-4 py-3"
+                        style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold capitalize">{nomeMes(cc.mes)}</p>
+                            <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
+                              <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                                Trib. <b style={{ color: "var(--text)" }}>{brl(cc.tributavel)}</b>
+                              </span>
+                              {previdencia > 0 && (
+                                <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                                  Prev. <b style={{ color: "var(--danger)" }}>{brl(previdencia)}</b>
+                                </span>
+                              )}
+                              {Number(cc.despesa_medica) > 0 && (
+                                <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                                  D.Med. <b style={{ color: "var(--danger)" }}>{brl(Number(cc.despesa_medica))}</b>
+                                </span>
+                              )}
+                              <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                                IR <b style={{ color: "var(--danger)" }}>{brl(cc.ir_retido)}</b>
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                            <p className="text-sm font-bold" style={{ color: liquido >= 0 ? "#4caf82" : "var(--danger)" }}>
+                              {brl(liquido)}
+                            </p>
+                            <div className="flex gap-1.5">
+                              <button onClick={() => setEditando(cc)} style={{ color: "var(--text-muted)" }}>
+                                <Pencil size={14} />
+                              </button>
+                              <button onClick={() => deletar(cc.id)} style={{ color: "var(--text-muted)" }}>
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <p className="text-xs text-center" style={{ color: "var(--text-muted)" }}>
+                Os valores registrados são usados na aba <b>IR no ano</b> para cálculo preciso da restituição.
+              </p>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
