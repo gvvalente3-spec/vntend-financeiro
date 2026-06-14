@@ -98,7 +98,7 @@ export interface Cartao {
   id: string;
   nome: string;
   limite: number;
-  venc: number; // dia do vencimento
+  venc: number;
 }
 
 export interface Lancamento {
@@ -106,7 +106,7 @@ export interface Lancamento {
   tipo: "despesa" | "receita";
   valor: number;
   descricao: string;
-  data: string; // ISO YYYY-MM-DD
+  data: string;
   cat: string;
   sub: string | null;
   subsub: string | null;
@@ -138,7 +138,7 @@ export interface Recorrencia {
   subsub: string | null;
   conta_id: string | null;
   cartao_id: string | null;
-  postados: string[]; // ["2026-06", ...]
+  postados: string[];
 }
 
 export interface Missao {
@@ -162,9 +162,14 @@ export interface Contracheque {
   id: string;
   mes: string; // YYYY-MM
   tributavel: number;
-  previdencia: number;
+  previdencia: number;   // total fusex + pensao (mantido para retrocompat com IRClient)
+  fusex: number | null;  // FuSEx separado (ND0001)
+  pensao: number | null; // Pensão Militar separada (ND0002)
+  despesa_medica: number;   // Despesa Médica FuSEx — ND0013 (não incide IR)
+  outros_descontos: number; // FHE, FPHMMLO, empréstimos consignados, etc.
+  receitas_isentas: number; // Aux. fardamento, diárias, aux. alimentação, etc.
   ir_retido: number;
-  arquivo: string | null; // Supabase Storage path
+  arquivo: string | null;
 }
 
 export interface Investimento {
@@ -176,7 +181,7 @@ export interface Investimento {
   pm: number | null;
   preco_atual: number | null;
   moeda: "BRL" | "USD";
-  valor: number | null; // usado quando sem cotas/ticker
+  valor: number | null;
   obj: "reserva" | "leilao" | "aluguel27" | null;
 }
 
