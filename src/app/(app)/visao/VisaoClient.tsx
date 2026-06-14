@@ -1,7 +1,10 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { TrendingUp, TrendingDown, ChevronDown, ChevronLeft, ChevronRight, CreditCard, Wallet, Plus, Pencil, Trash2 } from "lucide-react";
+import {
+  TrendingUp, TrendingDown, ChevronDown, ChevronLeft, ChevronRight,
+  CreditCard, Wallet, Plus, Search, X,
+} from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
@@ -72,7 +75,6 @@ function OrcamentosPanel({ lancamentos, orcamentos, workspaceId, onSalvo }: {
 }) {
   const [expandido, setExpandido] = useState<Record<string, boolean>>({});
 
-  // Agrupa despesas por cat > sub > subsub
   const tree: Record<string, { total: number; subs: Record<string, { total: number; subsubs: Record<string, number> }> }> = {};
   lancamentos.filter(l => l.tipo === "despesa").forEach(l => {
     const cat = l.cat || "Sem categoria";
@@ -112,13 +114,11 @@ function OrcamentosPanel({ lancamentos, orcamentos, workspaceId, onSalvo }: {
               <ChevronDown size={13} style={{ color: "var(--text-muted)", transform: aberta ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
             </button>
 
-            {/* Barra */}
             <div className="h-1 rounded-full mb-1" style={{ background: "var(--surface2)" }}>
               <div className="h-1 rounded-full transition-all" style={{ width: `${pct}%`, background: estourou ? "var(--danger)" : cor }} />
             </div>
             <LimiteInline cat={cat} sub="" subsub="" orcamentos={orcamentos} workspaceId={workspaceId} onSalvo={onSalvo} />
 
-            {/* Subcategorias expandidas */}
             {aberta && Object.entries(catData.subs).sort((a, b) => b[1].total - a[1].total).map(([sub, subData]) => {
               const limSub = calcLimite(cat, sub, "", orcamentos);
               const pctSub = limSub > 0 ? Math.min((subData.total / limSub) * 100, 100) : 0;
@@ -144,6 +144,56 @@ function OrcamentosPanel({ lancamentos, orcamentos, workspaceId, onSalvo }: {
   );
 }
 
+// ——— Item de lançamento ———
+function ItemLanc({ l }: { l: Lancamento }) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5 border-b last:border-0" style={{ borderColor: "var(--border)" }}>
+      <div className="w-1 self-stretch rounded-full flex-shrink-0" style={{ background: l.tipo === "receita" ? "#4caf82" : "var(--danger)" }} />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm truncate">{l.descricao || (l.tipo === "receita" ? "Receita" : "Despesa")}</p>
+        <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
+          {l.cat}{l.sub ? ` › ${l.sub}` : ""} · {formatData(l.data)}
+          {l.cartao_id && !l.pago ? " · em aberto" : ""}
+        </p>
+      </div>
+      <span className="text-sm font-semibold flex-shrink-0" style={{ color: l.tipo === "receita" ? "#4caf82" : "var(--danger)" }}>
+        {l.tipo === "receita" ? "+" : "−"}{brl(l.valor)}
+      </span>
+    </div>
+  );
+}
+
+// ——— Campo de busca ———
+function CampoBusca({ value, onChange, placeholder }: {
+  value: string; onChange: (v: string) => void; placeholder: string;
+}) {
+  return (
+    <div className="relative">
+      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
+      <input
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full rounded-xl text-sm outline-none"
+        style={{
+          background: "var(--surface2)",
+          border: "1px solid var(--border)",
+          color: "var(--text)",
+          padding: "8px 36px",
+        }}
+      />
+      {value && (
+        <button
+          onClick={() => onChange("")}
+          className="absolute right-3 top-1/2 -translate-y-1/2"
+        >
+          <X size={13} style={{ color: "var(--text-muted)" }} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ——— Componente principal ———
 export default function VisaoClient() {
   const { workspaceId, loading: wsLoading } = useWorkspace();
@@ -154,6 +204,10 @@ export default function VisaoClient() {
   const [orcamentos, setOrcamentos] = useState<Orcamento[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [aberto, setAberto] = useState<"receita" | "despesa" | null>(null);
+
+  // Busca e estado de grupos retráteis
+  const [searchQuery, setSearchQuery] = useState("");
+  const [gruposAbertos, setGruposAbertos] = useState<Record<string, boolean>>({});
 
   const carregar = useCallback(async () => {
     if (!workspaceId) return;
@@ -173,8 +227,6 @@ export default function VisaoClient() {
   }, [workspaceId]);
 
   useEffect(() => { carregar(); }, [carregar]);
-
-  // Garante dados frescos toda vez que o componente monta (incluindo navegação de volta)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (workspaceId) carregar(); }, []);
 
@@ -184,6 +236,24 @@ export default function VisaoClient() {
     setMes(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
   }
 
+  // Abre/fecha seção, resetando busca e estado dos grupos
+  function handleToggleSecao(tipo: "receita" | "despesa") {
+    setAberto(prev => {
+      const next = prev === tipo ? null : tipo;
+      setSearchQuery("");
+      setGruposAbertos({});
+      return next;
+    });
+  }
+
+  // Retrair/expandir grupo individual (default: expandido)
+  function toggleGrupo(key: string) {
+    setGruposAbertos(prev => {
+      const aberto = prev[key] !== false; // undefined = expandido por padrão
+      return { ...prev, [key]: !aberto };
+    });
+  }
+
   const [ano, mesNum] = mes.split("-").map(Number);
   const labelMes = `${MESES[mesNum - 1]}/${ano}`;
   const doMes = lancamentos.filter(l => mesDoLanc(l.data) === mes);
@@ -191,50 +261,58 @@ export default function VisaoClient() {
   const despesas = doMes.filter(l => l.tipo === "despesa").sort((a, b) => Number(b.valor) - Number(a.valor));
   const receitasMes = receitas.reduce((s, l) => s + Number(l.valor), 0);
   const despesasMes = despesas.reduce((s, l) => s + Number(l.valor), 0);
-
-  // Disponível = Receitas do mês − Despesas do mês (faturas de cartão + diretas + todas)
   const disponivel = receitasMes - despesasMes;
 
-  // Pizza
+  // Pizza (sem filtro de busca — mostra totais reais)
   const agrupDespesa: Record<string, number> = {};
   despesas.forEach(l => { const k = l.cat || "Sem categoria"; agrupDespesa[k] = (agrupDespesa[k] || 0) + Number(l.valor); });
   const pizzaData = Object.entries(agrupDespesa).sort((a, b) => b[1] - a[1]).slice(0, 7)
     .map(([nome, value], i) => ({ nome, value, cor: PALETA[i % PALETA.length] }));
 
-  // Grupos de despesas (por cartão + diretas)
+  // Mapa de nomes dos cartões
   const cartoesMap = Object.fromEntries(cartoes.map(c => [c.id, c.nome]));
-  const gruposDespesa = () => {
+
+  // Filtro de busca (aplicado na lista, não nos totais)
+  const q = searchQuery.toLowerCase().trim();
+  const despesasFiltradas = !q ? despesas : despesas.filter(l =>
+    (l.descricao || "").toLowerCase().includes(q) ||
+    (l.cat || "").toLowerCase().includes(q) ||
+    (l.sub || "").toLowerCase().includes(q) ||
+    (l.subsub || "").toLowerCase().includes(q) ||
+    formatData(l.data).includes(q)
+  );
+  const receitasFiltradas = !q ? receitas : receitas.filter(l =>
+    (l.descricao || "").toLowerCase().includes(q) ||
+    (l.cat || "").toLowerCase().includes(q) ||
+    (l.sub || "").toLowerCase().includes(q) ||
+    formatData(l.data).includes(q)
+  );
+
+  // Agrupa despesas filtradas por cartão / diretas
+  const gruposDespesa = (() => {
     const g: Record<string, Lancamento[]> = {};
-    despesas.forEach(l => { const k = l.cartao_id || "_diretas"; (g[k] = g[k] || []).push(l); });
-    return [...cartoes.map(c => c.id), "_diretas"].filter(k => g[k]).map(k => ({
-      key: k, nome: k === "_diretas" ? "Despesas diretas" : (cartoesMap[k] || "Cartão"),
-      cartao: k !== "_diretas", itens: g[k],
-      total: g[k].reduce((s, x) => s + Number(x.valor), 0),
-    }));
-  };
+    despesasFiltradas.forEach(l => {
+      const k = l.cartao_id || "_diretas";
+      (g[k] = g[k] || []).push(l);
+    });
+    return [...cartoes.map(c => c.id), "_diretas"]
+      .filter(k => g[k])
+      .map(k => ({
+        key: k,
+        nome: k === "_diretas" ? "Despesas diretas" : (cartoesMap[k] || "Cartão"),
+        cartao: k !== "_diretas",
+        itens: g[k],
+        total: g[k].reduce((s, x) => s + Number(x.valor), 0),
+      }));
+  })();
 
   if (wsLoading || carregando) {
     return <div className="flex items-center justify-center h-40" style={{ color: "var(--text-muted)" }}>Carregando…</div>;
   }
 
-  const ItemLanc = ({ l }: { l: Lancamento }) => (
-    <div className="flex items-center gap-3 py-2 border-b last:border-0" style={{ borderColor: "var(--border)" }}>
-      <div className="w-1 self-stretch rounded-full flex-shrink-0" style={{ background: l.tipo === "receita" ? "#4caf82" : "var(--danger)" }} />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm truncate">{l.descricao || (l.tipo === "receita" ? "Receita" : "Despesa")}</p>
-        <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
-          {l.cat}{l.sub ? ` › ${l.sub}` : ""} · {formatData(l.data)}
-          {l.cartao_id && !l.pago ? " · em aberto" : ""}
-        </p>
-      </div>
-      <span className="text-sm font-semibold flex-shrink-0" style={{ color: l.tipo === "receita" ? "#4caf82" : "var(--danger)" }}>
-        {l.tipo === "receita" ? "+" : "−"}{brl(l.valor)}
-      </span>
-    </div>
-  );
-
   return (
     <div className="max-w-2xl mx-auto px-4 py-4 flex flex-col gap-4">
+
       {/* Seletor de mês */}
       <div className="flex items-center justify-between rounded-xl px-4 py-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
         <button onClick={() => mudarMes(-1)} style={{ color: "var(--text-muted)" }}><ChevronLeft size={20} /></button>
@@ -242,7 +320,7 @@ export default function VisaoClient() {
         <button onClick={() => mudarMes(1)} style={{ color: "var(--text-muted)" }}><ChevronRight size={20} /></button>
       </div>
 
-      {/* Hero — Disponível para gastar */}
+      {/* Hero — Disponível */}
       <div className="rounded-2xl px-5 py-5 flex flex-col gap-1" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
         <p className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>Disponível</p>
         <p className="text-3xl font-bold" style={{ color: disponivel < 0 ? "var(--danger)" : "#4caf82" }}>{brl(disponivel)}</p>
@@ -258,7 +336,7 @@ export default function VisaoClient() {
           { tipo: "receita" as const, icon: TrendingUp, valor: receitasMes, cor: "#4caf82", label: "Receitas" },
           { tipo: "despesa" as const, icon: TrendingDown, valor: despesasMes, cor: "var(--danger)", label: "Despesas" },
         ].map(({ tipo, icon: Icon, valor, cor, label }) => (
-          <button key={tipo} onClick={() => setAberto(a => a === tipo ? null : tipo)}
+          <button key={tipo} onClick={() => handleToggleSecao(tipo)}
             className="rounded-xl px-4 py-3 text-left flex flex-col gap-1 transition-colors"
             style={{ background: aberto === tipo ? "var(--surface2)" : "var(--surface)", border: `1px solid ${aberto === tipo ? cor : "var(--border)"}` }}>
             <div className="flex items-center justify-between">
@@ -271,33 +349,96 @@ export default function VisaoClient() {
         ))}
       </div>
 
-      {/* Lista expandida — Receitas */}
+      {/* ——— RECEITAS expandidas ——— */}
       {aberto === "receita" && (
-        <div className="rounded-xl px-4 py-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <p className="text-sm font-semibold mb-2">Todas as receitas · {receitas.length}</p>
-          {receitas.length === 0 ? <p className="text-xs" style={{ color: "var(--text-muted)" }}>Nada lançado.</p>
-            : receitas.map(l => <ItemLanc key={l.id} l={l} />)}
+        <div className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <div className="px-4 pt-3 pb-2 flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold">Receitas · {receitas.length}</p>
+              {q && <p className="text-xs" style={{ color: "var(--text-muted)" }}>{receitasFiltradas.length} resultado(s)</p>}
+            </div>
+            <CampoBusca value={searchQuery} onChange={setSearchQuery} placeholder="Buscar receitas…" />
+          </div>
+          {receitasFiltradas.length === 0 ? (
+            <p className="text-xs px-4 pb-3" style={{ color: "var(--text-muted)" }}>
+              {q ? "Nenhuma receita encontrada." : "Nada lançado."}
+            </p>
+          ) : (
+            receitasFiltradas.map(l => <ItemLanc key={l.id} l={l} />)
+          )}
         </div>
       )}
 
-      {/* Lista expandida — Despesas por grupo */}
+      {/* ——— DESPESAS expandidas — grupos retráteis ——— */}
       {aberto === "despesa" && (
         <div className="flex flex-col gap-3">
-          {despesas.length === 0 && <p className="text-xs text-center" style={{ color: "var(--text-muted)" }}>Nenhuma despesa.</p>}
-          {gruposDespesa().map(g => (
-            <div key={g.key} className="rounded-xl px-4 py-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-              <div className="flex items-center gap-2 mb-2">
-                {g.cartao ? <CreditCard size={14} style={{ color: "var(--warning)" }} /> : <Wallet size={14} style={{ color: "var(--primary-light)" }} />}
-                <p className="text-sm font-semibold flex-1">{g.cartao ? `Fatura · ${g.nome}` : g.nome}</p>
-                <span className="text-sm font-bold" style={{ color: "var(--danger)" }}>−{brl(g.total)}</span>
-              </div>
-              {g.itens.map(l => <ItemLanc key={l.id} l={l} />)}
+
+          {/* Campo de busca + contador */}
+          <div className="flex flex-col gap-1.5">
+            <CampoBusca value={searchQuery} onChange={setSearchQuery} placeholder="Buscar por descrição, categoria, data…" />
+            {q && (
+              <p className="text-xs px-1" style={{ color: "var(--text-muted)" }}>
+                {despesasFiltradas.length} resultado(s) · total {brl(despesasFiltradas.reduce((s, l) => s + Number(l.valor), 0))}
+              </p>
+            )}
+          </div>
+
+          {/* Grupos */}
+          {gruposDespesa.length === 0 ? (
+            <div className="rounded-xl py-6 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+                {q ? `Nenhuma despesa encontrada para "${searchQuery}".` : "Nenhuma despesa este mês."}
+              </p>
             </div>
-          ))}
+          ) : (
+            gruposDespesa.map(g => {
+              const isOpen = gruposAbertos[g.key] !== false; // default: expandido
+              return (
+                <div key={g.key} className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+
+                  {/* Header clicável */}
+                  <button
+                    className="w-full flex items-center gap-2 px-4 py-3"
+                    onClick={() => toggleGrupo(g.key)}
+                  >
+                    {g.cartao
+                      ? <CreditCard size={14} style={{ color: "var(--warning)", flexShrink: 0 }} />
+                      : <Wallet size={14} style={{ color: "var(--primary-light)", flexShrink: 0 }} />
+                    }
+                    <p className="text-sm font-semibold flex-1 text-left">
+                      {g.cartao ? `Fatura · ${g.nome}` : g.nome}
+                    </p>
+                    <span className="text-xs flex-shrink-0 mr-1" style={{ color: "var(--text-muted)" }}>
+                      {g.itens.length} item{g.itens.length !== 1 ? "s" : ""}
+                    </span>
+                    <span className="text-sm font-bold flex-shrink-0 mr-1" style={{ color: "var(--danger)" }}>
+                      −{brl(g.total)}
+                    </span>
+                    <ChevronDown
+                      size={15}
+                      style={{
+                        color: "var(--text-muted)",
+                        transform: isOpen ? "rotate(180deg)" : "none",
+                        transition: "transform 0.2s",
+                        flexShrink: 0,
+                      }}
+                    />
+                  </button>
+
+                  {/* Itens — visíveis apenas quando expandido */}
+                  {isOpen && (
+                    <div className="border-t" style={{ borderColor: "var(--border)" }}>
+                      {g.itens.map(l => <ItemLanc key={l.id} l={l} />)}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
       )}
 
-      {/* Grid VNTEND: pizza + orçamento */}
+      {/* ——— Pizza + Orçamento ——— */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {/* Pizza */}
         <div className="rounded-xl px-4 py-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
@@ -343,4 +484,3 @@ export default function VisaoClient() {
     </div>
   );
 }
-
