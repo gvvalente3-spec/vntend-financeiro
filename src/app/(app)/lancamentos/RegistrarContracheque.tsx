@@ -142,7 +142,7 @@ export default function RegistrarContracheque({ workspaceId, fechar, onSalvo }: 
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
       style={{ background: "rgba(0,0,0,0.5)" }} onClick={fechar}>
       <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)", maxHeight: "92vh" }}
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", maxHeight: "min(88dvh, 88vh)" }}
         onClick={e => e.stopPropagation()}>
 
         {/* ── Header fixo ── */}
@@ -164,7 +164,7 @@ export default function RegistrarContracheque({ workspaceId, fechar, onSalvo }: 
         </div>
 
         {/* ── Conteúdo rolável ── */}
-        <div className="overflow-y-auto flex-1 p-4 flex flex-col gap-3">
+        <div className="overflow-y-auto p-4 flex flex-col gap-3" style={{ minHeight: 0, flex: "1 1 auto" }}>
 
           {modoForm ? (
             // ── MODO FORMULÁRIO ──
