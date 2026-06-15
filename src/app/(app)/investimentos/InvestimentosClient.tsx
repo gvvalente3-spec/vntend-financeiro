@@ -2,14 +2,32 @@
 
 import { useEffect, useState, useCallback } from "react";
 import {
-  Eye, EyeOff, Plus, Pencil, Trash2, X, TrendingUp,
-  ChevronDown, ChevronUp, Target, Settings2
+  Eye, EyeOff, Plus, Pencil, Trash2, X,
+  ChevronDown, ChevronUp, Target, Settings2, RefreshCw
 } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { brl } from "@/lib/utils";
 import type { Investimento, InvestMetas } from "@/types/database";
+
+// —— APIs ——
+async function fetchCotacao(ticker: string): Promise<number | null> {
+  try {
+    const upper = ticker.toUpperCase().replace(".SA", "");
+    const res = await fetch(`https://brapi.dev/api/quote/${upper}?token=anonymous`, { signal: AbortSignal.timeout(5000) });
+    const data = await res.json();
+    return data?.results?.[0]?.regularMarketPrice || null;
+  } catch { return null; }
+}
+
+async function fetchDolar(): Promise<number | null> {
+  try {
+    const res = await fetch(`https://economia.awesomeapi.com.br/json/last/USD-BRL`, { signal: AbortSignal.timeout(5000) });
+    const data = await res.json();
+    return parseFloat(data.USDBRL.bid);
+  } catch { return null; }
+}
 
 // —— Interface Objetivos Dinâmicos ——
 export interface ObjetivoCustom {
@@ -71,6 +89,16 @@ function valorAtual(inv: Investimento, ptax: number): number {
     ? inv.cotas * inv.preco_atual
     : Number(inv.valor) || 0;
   return inv.moeda === "USD" ? base * ptax : base;
+}
+
+function ganhoAtivo(inv: Investimento, ptax: number) {
+  const q = Number(inv.cotas || 0), pm = Number(inv.pm || 0), pa = Number(inv.preco_atual || 0);
+  if (q > 0 && pm > 0 && pa > 0) {
+    const pmBrl = inv.moeda === "USD" ? pm * ptax : pm;
+    const paBrl = inv.moeda === "USD" ? pa * ptax : pa;
+    return q * (paBrl - pmBrl);
+  }
+  return 0;
 }
 
 const inp = {
@@ -181,6 +209,46 @@ function ModalAtivo({
   );
 }
 
+// —— Modal Aporte ——
+function FormAporte({ ativo, fechar, onSalvo }: { ativo: Investimento; fechar: () => void; onSalvo: () => void; }) {
+  const [novasCotas, setNovasCotas] = useState("");
+  const [precoCompra, setPrecoCompra] = useState(ativo.preco_atual ? String(Math.round(ativo.preco_atual * 100)) : (ativo.pm ? String(Math.round(ativo.pm * 100)) : ""));
+  const [salvando, setSalvando] = useState(false);
+
+  async function salvar() {
+    const nc = Number(novasCotas) || 0, np = parseInt(precoCompra || "0", 10) / 100;
+    if (!nc || !np) return;
+    setSalvando(true);
+    const oldCotas = Number(ativo.cotas) || 0, oldPm = Number(ativo.pm) || 0;
+    const newCotas = oldCotas + nc;
+    const newPm = newCotas ? ((oldCotas * oldPm) + (nc * np)) / newCotas : np;
+    await createClient().from("investimentos").update({ cotas: newCotas, pm: newPm, preco_atual: np } as Record<string, unknown>).eq("id", ativo.id);
+    onSalvo(); fechar(); setSalvando(false);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center pb-12 sm:pb-0" style={{ background: "rgba(0,0,0,0.6)" }} onClick={fechar}>
+      <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 flex flex-col gap-4 max-h-[80vh] overflow-y-auto" style={{ background: "var(--surface)", border: "1px solid var(--border)" }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold">Aportar em {ativo.nome}</h3>
+          <button onClick={fechar} style={{ color: "var(--text-muted)" }}>✕</button>
+        </div>
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>O preço médio será recalculado automaticamente.</p>
+        <div className="flex gap-3">
+          <label style={{ ...lbl, flex: 1 }}>Novas cotas<input type="number" value={novasCotas} onChange={e => setNovasCotas(e.target.value)} placeholder="0" style={inp} /></label>
+          <label style={{ ...lbl, flex: 1 }}>Preço de compra<InputValor value={precoCompra} onChange={setPrecoCompra} style={inp} placeholder="0,00" /></label>
+        </div>
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+          PM atual: {ativo.moeda === "USD" ? "$" : "R$"}{Number(ativo.pm || 0).toFixed(2)} · {Number(ativo.cotas || 0)} cotas
+        </p>
+        <button onClick={salvar} disabled={salvando} className="py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: "var(--primary)", color: "#fff" }}>
+          {salvando ? "Salvando…" : "Aportar"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // —— Modal Gerenciar Objetivos ——
 function ModalObjetivos({ workspaceId, objetivosAtuais, fechar, onSalvo }: {
   workspaceId: string; objetivosAtuais: ObjetivoCustom[]; fechar: () => void; onSalvo: () => void;
@@ -258,22 +326,40 @@ function PtaxInline({ valorAtual, workspaceId, onSalvo }: {
   const [editando, setEditando] = useState(false);
   const [val, setVal] = useState(String(valorAtual));
   const [salvando, setSalvando] = useState(false);
+  const [buscando, setBuscando] = useState(false);
 
-  async function salvar() {
+  async function salvarManual() {
     setSalvando(true);
     await createClient().from("invest_metas").update({ ptax: Number(val) || valorAtual } as Record<string, unknown>).eq("workspace_id", workspaceId);
     setEditando(false); setSalvando(false); onSalvo();
   }
 
+  async function atualizarDolarOnline() {
+    setBuscando(true);
+    const cotacao = await fetchDolar();
+    if (cotacao) {
+      await createClient().from("invest_metas").update({ ptax: cotacao } as Record<string, unknown>).eq("workspace_id", workspaceId);
+      onSalvo();
+    } else {
+      alert("Não foi possível obter a cotação do Dólar no momento.");
+    }
+    setBuscando(false);
+  }
+
   if (editando) {
     return (
-      <input autoFocus type="number" step="0.0001" value={val} onChange={e => setVal(e.target.value)} onBlur={salvar} onKeyDown={e => { if (e.key === "Enter") salvar(); }} disabled={salvando} className="text-sm rounded px-1.5 py-0.5 w-24 outline-none text-right" style={{ background: "var(--surface)", border: "1px solid var(--primary)", color: "var(--text)" }} />
+      <input autoFocus type="number" step="0.0001" value={val} onChange={e => setVal(e.target.value)} onBlur={salvarManual} onKeyDown={e => { if (e.key === "Enter") salvarManual(); }} disabled={salvando} className="text-sm rounded px-1.5 py-0.5 w-24 outline-none text-right" style={{ background: "var(--surface)", border: "1px solid var(--primary)", color: "var(--text)" }} />
     );
   }
   return (
-    <button onClick={() => { setVal(String(valorAtual)); setEditando(true); }} className="text-sm font-semibold" style={{ color: "var(--primary)" }}>
-      R$ {valorAtual.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}
-    </button>
+    <div className="flex items-center gap-2">
+      <button onClick={atualizarDolarOnline} disabled={buscando} title="Atualizar cotação via AwesomeAPI" className="transition-colors hover:opacity-80" style={{ color: "var(--text-muted)" }}>
+        <RefreshCw size={13} className={buscando ? "animate-spin" : ""} />
+      </button>
+      <button onClick={() => { setVal(String(valorAtual)); setEditando(true); }} className="text-sm font-semibold" style={{ color: "var(--primary)" }}>
+        R$ {valorAtual.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}
+      </button>
+    </div>
   );
 }
 
@@ -288,6 +374,8 @@ export default function InvestimentosClient() {
   const [modalAberto, setModalAberto] = useState(false);
   const [modalObjAberto, setModalObjAberto] = useState(false);
   const [editando, setEditando] = useState<Investimento | null>(null);
+  const [aportando, setAportando] = useState<Investimento | null>(null);
+  const [buscandoTicker, setBuscandoTicker] = useState<Record<string, boolean>>({});
   const [catAberta, setCatAberta] = useState<Record<string, boolean>>({});
   const [mostrarOcultos, setMostrarOcultos] = useState(false);
 
@@ -308,6 +396,18 @@ export default function InvestimentosClient() {
   }, [workspaceId]);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  async function atualizarTicker(id: string, ticker: string) {
+    setBuscandoTicker(prev => ({ ...prev, [id]: true }));
+    const preco = await fetchCotacao(ticker);
+    if (preco) {
+      await createClient().from("investimentos").update({ preco_atual: preco } as Record<string, unknown>).eq("id", id);
+      setItens(prev => prev.map(x => x.id === id ? { ...x, preco_atual: preco } : x));
+    } else {
+      alert(`Falha ao buscar cotação de ${ticker}.`);
+    }
+    setBuscandoTicker(prev => ({ ...prev, [id]: false }));
+  }
 
   async function toggleHidden(inv: Investimento) {
     const novoValor = !inv.hidden;
@@ -415,23 +515,51 @@ export default function InvestimentosClient() {
               <div className="border-t" style={{ borderColor: "var(--border)" }}>
                 {grupo.map(inv => {
                   const val = valorAtual(inv, ptax);
+                  const gan = ganhoAtivo(inv, ptax);
+                  const ganPct = inv.cotas && inv.pm && inv.preco_atual ? ((Number(inv.preco_atual) / Number(inv.pm) - 1) * 100) : null;
                   const oculto = inv.hidden;
                   const vinculadoObj = objetivosCustom.find(o => o.id === inv.obj);
+
                   return (
-                    <div key={inv.id} className="flex flex-col gap-1 px-4 py-2.5 border-b last:border-0" style={{ borderColor: "var(--border)", opacity: oculto ? 0.45 : 1, transition: "opacity 0.15s" }}>
-                      <div className="flex items-center justify-between">
+                    <div key={inv.id} className="flex flex-col gap-2 px-4 py-3 border-b last:border-0" style={{ borderColor: "var(--border)", opacity: oculto ? 0.45 : 1, transition: "opacity 0.15s" }}>
+                      <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5">
                             {oculto && <EyeOff size={11} style={{ color: "var(--text-muted)", flexShrink: 0 }} />}
                             <p className="text-sm truncate font-medium">{inv.nome}</p>
                             {inv.ticker && <span className="text-xs px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: "var(--surface2)", color: "var(--text-muted)" }}>{inv.ticker}</span>}
                           </div>
-                          {inv.cotas && <p className="text-xs" style={{ color: "var(--text-muted)" }}>{inv.cotas} cotas · PM {inv.pm ? brl(inv.pm) : "—"}{inv.moeda === "USD" ? " (USD)" : ""}</p>}
+                          {inv.cotas && (
+                            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+                              {inv.cotas} cotas · PM {inv.moeda === "USD" ? "$" : "R$"}{Number(inv.pm).toFixed(2)}
+                              {inv.preco_atual && ` · Atual ${inv.moeda === "USD" ? "$" : "R$"}${Number(inv.preco_atual).toFixed(2)}`}
+                            </p>
+                          )}
                           {vinculadoObj && <p className="text-[10px] mt-0.5" style={{ color: "var(--primary-light)" }}>↳ {vinculadoObj.emoji} {vinculadoObj.nome}</p>}
                         </div>
-                        <span className="text-sm font-bold flex-shrink-0 mr-3" style={{ color: "#4caf82" }}>{brl(val)}</span>
-                        
-                        <div className="flex gap-1.5 flex-shrink-0">
+                        <div className="text-right flex-shrink-0 ml-3">
+                          <p className="text-sm font-bold" style={{ color: "#4caf82" }}>{brl(val)}</p>
+                          {ganPct !== null && (
+                            <p className="text-xs" style={{ color: ganPct >= 0 ? "#4caf82" : "var(--danger)" }}>
+                              {ganPct >= 0 ? "+" : ""}{ganPct.toFixed(1)}%
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* Controles: Aportar, Cotação, Ocultar, Editar, Excluir */}
+                      <div className="flex gap-2 items-center flex-wrap">
+                        {inv.ticker && (
+                          <button onClick={() => atualizarTicker(inv.id, inv.ticker!)} disabled={buscandoTicker[inv.id]} className="flex items-center gap-1 text-[11px] px-2 py-1 rounded bg-transparent" style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                            <RefreshCw size={10} className={buscandoTicker[inv.id] ? "animate-spin" : ""} /> {buscandoTicker[inv.id] ? "buscando…" : "cotação"}
+                          </button>
+                        )}
+                        {inv.cotas && (
+                          <button onClick={() => setAportando(inv)} className="flex items-center gap-1 text-[11px] px-2 py-1 rounded bg-transparent" style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                            <Plus size={10} /> aportar
+                          </button>
+                        )}
+                        <div className="flex gap-2 items-center ml-auto">
                           <button onClick={() => toggleHidden(inv)} title={oculto ? "Incluir no total" : "Excluir do total"} style={{ color: oculto ? "var(--primary)" : "var(--text-muted)" }}>{oculto ? <Eye size={14} /> : <EyeOff size={14} />}</button>
                           <button onClick={() => abrirEditar(inv)} style={{ color: "var(--text-muted)" }}><Pencil size={13} /></button>
                           <button onClick={() => deletar(inv.id)} style={{ color: "var(--text-muted)" }}><Trash2 size={13} /></button>
@@ -487,6 +615,7 @@ export default function InvestimentosClient() {
 
       {/* Modais */}
       {modalAberto && <ModalAtivo workspaceId={workspaceId!} inv={editando} ptax={ptax} objetivos={objetivosCustom} fechar={() => setModalAberto(false)} onSalvo={carregar} />}
+      {aportando && <FormAporte ativo={aportando} fechar={() => setAportando(null)} onSalvo={carregar} />}
       {modalObjAberto && <ModalObjetivos workspaceId={workspaceId!} objetivosAtuais={objetivosCustom} fechar={() => setModalObjAberto(false)} onSalvo={carregar} />}
     </div>
   );
