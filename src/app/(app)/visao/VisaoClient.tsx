@@ -274,18 +274,31 @@ export default function VisaoClient() {
 
   // Filtro de busca (aplicado na lista, não nos totais)
   const q = searchQuery.toLowerCase().trim();
+
+  // Busca por valor: query numérica (ex: "1500" ou "1.500") compara prefixo dos dígitos com brl(valor)
+  function matchValor(valor: number, ql: string): boolean {
+    const isNumQuery = /^[\d,\.]+$/.test(ql);
+    if (!isNumQuery) return false;
+    const qDigits = ql.replace(/\D/g, "");
+    if (qDigits.length < 2) return false;
+    const vDigits = brl(valor).replace(/\D/g, "");
+    return vDigits.startsWith(qDigits);
+  }
+
   const despesasFiltradas = !q ? despesas : despesas.filter(l =>
     (l.descricao || "").toLowerCase().includes(q) ||
     (l.cat || "").toLowerCase().includes(q) ||
     (l.sub || "").toLowerCase().includes(q) ||
     (l.subsub || "").toLowerCase().includes(q) ||
-    formatData(l.data).includes(q)
+    formatData(l.data).includes(q) ||
+    matchValor(Number(l.valor), q)
   );
   const receitasFiltradas = !q ? receitas : receitas.filter(l =>
     (l.descricao || "").toLowerCase().includes(q) ||
     (l.cat || "").toLowerCase().includes(q) ||
     (l.sub || "").toLowerCase().includes(q) ||
-    formatData(l.data).includes(q)
+    formatData(l.data).includes(q) ||
+    matchValor(Number(l.valor), q)
   );
 
   // Agrupa despesas filtradas por cartão / diretas
