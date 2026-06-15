@@ -9,7 +9,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { brl, mesAtual, mesDoLanc, formatData, MESES } from "@/lib/utils";
 import type { Lancamento, Conta, Cartao } from "@/types/database";
-import { iconeDaCategoria, corDaCategoria, type CatMeta } from "@/components/layout/categoryIcons";
+import { iconeDaCategoria, corDaCategoria, type CatMeta } from "@/components/categoryIcons";
 import RegistrarContracheque from "./RegistrarContracheque";
 
 // Tipo da árvore de categorias (tabela "categorias")
@@ -79,34 +79,8 @@ function ItemLanc({ l, catMeta, onEditar, onDeletar }: {
   const isRec = l.tipo === "receita";
   const Icone = iconeDaCategoria(l.cat, catMeta, l.tipo);
   const cor = isRec ? "#4caf82" : corDaCategoria(l.cat, catMeta, l.tipo);
-
   return (
     <div className="flex items-center gap-3 px-4 py-2.5 border-b last:border-0" style={{ borderColor: "var(--border)" }}>
-      {/* Ícone da categoria */}
-      <span className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
-        style={{ background: `${cor}1a`, color: cor }}>
-        <Icone size={17} />
-      </span>
-
-      <div className="flex-1 min-w-0">
-        <p className="text-sm truncate">{l.descricao || (isRec ? "Receita" : "Despesa")}</p>
-        <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
-          {l.cat}{l.sub ? ` › ${l.sub}` : ""} · {formatData(l.data)}
-          {l.cartao_id && !l.pago ? " · em aberto" : ""}
-        </p>
-      </div>
-
-      <span className="text-sm font-semibold flex-shrink-0 mr-1" style={{ color: isRec ? "#4caf82" : "var(--danger)" }}>
-        {isRec ? "+" : "−"}{brl(Number(l.valor))}
-      </span>
-
-      <div className="flex gap-1 flex-shrink-0">
-        <button onClick={() => onEditar(l)} style={{ color: "var(--text-muted)" }}><Pencil size={13} /></button>
-        <button onClick={() => onDeletar(l.id)} style={{ color: "var(--text-muted)" }}><Trash2 size={13} /></button>
-      </div>
-    </div>
-  );
-}
       {/* Ícone da categoria */}
       <span className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
         style={{ background: `${cor}1a`, color: cor }}>
@@ -188,13 +162,13 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center pb-12 sm:pb-0"
       style={{ background: "rgba(0,0,0,0.5)" }} onClick={fechar}>
       <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col"
         style={{
           background: "var(--surface)",
           border: "1px solid var(--border)",
-          maxHeight: "min(88dvh, 88vh)",
+          maxHeight: "80vh",
           height: "auto",
         }}
         onClick={e => e.stopPropagation()}>
@@ -384,77 +358,4 @@ export default function LancamentosClient() {
           </div>
           <p className="font-bold" style={{ color: "#4caf82" }}>+{brl(totalReceitas)}</p>
         </div>
-        <div className="rounded-xl px-4 py-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <div className="flex items-center gap-1.5 mb-1">
-            <TrendingDown size={14} style={{ color: "var(--danger)" }} />
-            <span className="text-xs" style={{ color: "var(--text-muted)" }}>Despesas</span>
-          </div>
-          <p className="font-bold" style={{ color: "var(--danger)" }}>−{brl(totalDespesas)}</p>
-        </div>
-      </div>
-
-      {/* Ações */}
-      <div className="grid grid-cols-2 gap-2">
-        <button onClick={abrirNovo}
-          className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
-          style={{ background: "var(--primary)", color: "#fff" }}>
-          <Plus size={16} /> Novo lançamento
-        </button>
-        <button onClick={() => setContrachequeAberto(true)}
-          className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
-          style={{ background: "var(--surface2)", color: "var(--text)", border: "1px solid var(--border)" }}>
-          <FileText size={16} /> Contracheque
-        </button>
-      </div>
-
-      {/* Filtros */}
-      <div className="flex gap-1 rounded-xl p-1" style={{ background: "var(--surface2)" }}>
-        {([["todos", "Todos"], ["receita", "Receitas"], ["despesa", "Despesas"]] as const).map(([v, label]) => (
-          <button key={v} onClick={() => setAba(v)}
-            className="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
-            style={{ background: aba === v ? "var(--surface)" : "transparent", color: aba === v ? "var(--text)" : "var(--text-muted)" }}>
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* Busca */}
-      <div className="flex flex-col gap-1">
-        <CampoBusca value={searchQuery} onChange={setSearchQuery} placeholder="Buscar por descrição, categoria, data ou valor…" />
-        {ql && (
-          <p className="text-xs px-1" style={{ color: "var(--text-muted)" }}>
-            {filtrados.length} resultado(s)
-            {filtrados.length > 0 ? ` · total ${brl(filtrados.reduce((s, l) => s + Number(l.valor), 0))}` : ""}
-          </p>
-        )}
-      </div>
-
-      {/* Lista */}
-      <div className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-        {filtrados.length === 0 ? (
-          <p className="text-sm text-center py-8" style={{ color: "var(--text-muted)" }}>
-            {ql ? `Nenhum resultado para "${searchQuery}".` : "Nenhum lançamento neste mês."}
-          </p>
-        ) : (
-          filtrados.map(l => (
-            <ItemLanc key={l.id} l={l} catMeta={catMeta} onEditar={abrirEditar} onDeletar={deletar} />
-          ))
-        )}
-      </div>
-
-      {/* Modais */}
-      {modalAberto && (
-        <ModalLanc
-          workspaceId={workspaceId!}
-          contas={contas} cartoes={cartoes} categorias={categorias}
-          lancamento={lancamentoEd}
-          fechar={() => setModalAberto(false)}
-          onSalvo={carregar}
-        />
-      )}
-      {contrachequeAberto && workspaceId && (
-        <RegistrarContracheque workspaceId={workspaceId} fechar={() => setContrachequeAberto(false)} onSalvo={carregar} />
-      )}
-    </div>
-  );
-}
+        <div className="rounded-xl px-
