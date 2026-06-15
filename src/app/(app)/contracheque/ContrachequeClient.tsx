@@ -17,6 +17,7 @@ const TABELA_IR = [
 ];
 
 const DEP_DEDUCAO = 189.59; // por dependente
+const COTA_PRE_ESCOLAR = 321.00; // Valor base Exército 
 
 function calcIR(base: number, dependentes: number): number {
   const baseAjustada = Math.max(0, base - DEP_DEDUCAO * dependentes);
@@ -69,6 +70,10 @@ function simularCC(perfil: Perfil, extras: { missaoLiq: number; outroValor: numb
   const cdm = s * (perfil.comp_disp_mil_pct / 100);
   const grat = perfil.grat_representacao ? s * 0.1 : 0; // estimativa
 
+  const depPreEscolar = perfil.dependentes_pre_escolar || 0;
+  const auxPreEscolar = depPreEscolar * COTA_PRE_ESCOLAR;
+  const cotaPreEscolar = auxPreEscolar * 0.05; // 5% de cota-parte
+
   const rendimentos: Array<{ label: string; valor: number }> = [
     { label: "Soldo", valor: s },
     ...(hab > 0 ? [{ label: "Adicional de Habilitação", valor: hab }] : []),
@@ -78,21 +83,29 @@ function simularCC(perfil: Perfil, extras: { missaoLiq: number; outroValor: numb
     ...(cdm > 0 ? [{ label: "Comp. Disponibilidade Militar", valor: cdm }] : []),
     ...(grat > 0 ? [{ label: "Grat. Representação", valor: grat }] : []),
     ...(extras.missaoLiq > 0 ? [{ label: "Ressarcimento Missão (líq.)", valor: extras.missaoLiq }] : []),
+    ...(auxPreEscolar > 0 ? [{ label: `Auxílio Pré-escolar (${depPreEscolar} dep.)`, valor: auxPreEscolar }] : []),
     ...(extras.outroValor > 0 ? [{ label: extras.outroDesc || "Outro adicional", valor: extras.outroValor }] : []),
     ...(perfil.cc_receitas_extras || []).map(e => ({ label: e.desc, valor: e.valor })),
   ];
 
   const totalRendimentos = rendimentos.reduce((sum, r) => sum + r.valor, 0);
 
-  const fusex = totalRendimentos * (perfil.fusex_pct / 100);
-  const pensao = totalRendimentos * (perfil.pensao_pct / 100);
+  // PREVIDÊNCIA: Incide apenas sobre Base de Contribuição (Soldo + Hab + Comp + AdMil + CDM)
+  const baseContrib = s + hab + comp + adMil + cdm;
+  const fusex = baseContrib * (perfil.fusex_pct / 100);
+  const pensao = baseContrib * (perfil.pensao_pct / 100);
   const previdencia = fusex + pensao;
-  const baseIR = Math.max(0, totalRendimentos - previdencia);
+
+  // IR: Exclui receitas isentas (Ressarcimento missão, Aux Pré-escolar, etc)
+  const totalExtrasReceitas = (perfil.cc_receitas_extras || []).reduce((acc, e) => acc + e.valor, 0);
+  const baseTributavel = s + hab + gle + comp + adMil + cdm + grat + extras.outroValor + totalExtrasReceitas;
+  const baseIR = Math.max(0, baseTributavel - previdencia);
   const ir = calcIR(baseIR, perfil.dependentes || 0);
 
   const descontos: Array<{ label: string; valor: number }> = [
     { label: `FuSEx (${perfil.fusex_pct}%)`, valor: fusex },
     { label: `Pensão Militar (${perfil.pensao_pct}%)`, valor: pensao },
+    ...(cotaPreEscolar > 0 ? [{ label: "Cota-parte Pré-escolar (5%)", valor: cotaPreEscolar }] : []),
     { label: "Imposto de Renda", valor: ir },
     ...(perfil.cc_descontos_extras || []).map(e => ({ label: e.desc, valor: e.valor })),
   ];
@@ -286,7 +299,7 @@ export default function ContrachequeClient() {
         <p className="text-xs font-medium mb-1.5" style={{ color: "var(--text-muted)" }}>Cálculo do IR (estimado)</p>
         <div className="flex flex-wrap gap-x-4 gap-y-1">
           <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-            Rendimentos <b style={{ color: "var(--text)" }}>{brl(resultado.totalRendimentos)}</b>
+            Rend. Trib. <b style={{ color: "var(--text)" }}>{brl(resultado.baseIR + resultado.previdencia)}</b>
           </span>
           <span className="text-xs" style={{ color: "var(--text-muted)" }}>
             − Previdência <b style={{ color: "var(--text)" }}>{brl(resultado.previdencia)}</b>
@@ -295,7 +308,7 @@ export default function ContrachequeClient() {
             − Dep. ({perfil.dependentes}) <b style={{ color: "var(--text)" }}>{brl(DEP_DEDUCAO * (perfil.dependentes || 0))}</b>
           </span>
           <span className="text-xs font-semibold" style={{ color: "var(--text-muted)" }}>
-            = Base IR <b style={{ color: "var(--text)" }}>{brl(resultado.baseIR)}</b>
+            = Base IR <b style={{ color: "var(--text)" }}>{brl(resultado.baseIR - (DEP_DEDUCAO * (perfil.dependentes || 0)))}</b>
             {" · "}IR <b style={{ color: "var(--danger)" }}>{brl(resultado.ir)}</b>
           </span>
         </div>
