@@ -11,6 +11,31 @@ import { useWorkspace } from "@/hooks/useWorkspace";
 import { brl } from "@/lib/utils";
 import type { Investimento, InvestMetas } from "@/types/database";
 
+// —— InputValor: centavos automáticos (29550 → 295,50) ——
+function fmtCts(digits: string): string {
+  const n = parseInt(digits || "0", 10);
+  if (!digits) return "";
+  return (n / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function InputValor({ value, onChange, style, placeholder }: {
+  value: string; onChange: (d: string) => void;
+  style?: React.CSSProperties; placeholder?: string;
+}) {
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={fmtCts(value)}
+      onChange={e => {
+        const d = e.target.value.replace(/\D/g, "").slice(0, 12);
+        onChange(d);
+      }}
+      placeholder={placeholder ?? "0,00"}
+      style={style}
+    />
+  );
+}
+
 // —— Paleta e categorias ——
 const CAT_INFO: Record<string, { label: string; cor: string }> = {
   reserva: { label: "Reserva", cor: "#2a8a72" },
@@ -52,17 +77,28 @@ function ModalAtivo({
   const [ticker, setTicker] = useState(inv?.ticker || "");
   const [categoria, setCategoria] = useState<string>(inv?.categoria || "rendaFixa");
   const [cotas, setCotas] = useState(inv?.cotas != null ? String(inv.cotas) : "");
-  const [pm, setPm] = useState(inv?.pm != null ? String(inv.pm) : "");
-  const [precoAtual, setPrecoAtual] = useState(inv?.preco_atual != null ? String(inv.preco_atual) : "");
+  // Campos de preço em centavos (string de dígitos)
+  const [pm, setPm] = useState(
+    inv?.pm != null ? String(Math.round(Number(inv.pm) * 100)) : ""
+  );
+  const [precoAtual, setPrecoAtual] = useState(
+    inv?.preco_atual != null ? String(Math.round(Number(inv.preco_atual) * 100)) : ""
+  );
   const [moeda, setMoeda] = useState<"BRL" | "USD">(inv?.moeda || "BRL");
-  const [valorDir, setValorDir] = useState(inv?.valor != null ? String(inv.valor) : "");
+  const [valorDir, setValorDir] = useState(
+    inv?.valor != null ? String(Math.round(Number(inv.valor) * 100)) : ""
+  );
   const [salvando, setSalvando] = useState(false);
+
+  const pmNum = parseInt(pm || "0", 10) / 100;
+  const precoNum = parseInt(precoAtual || "0", 10) / 100;
+  const valorDirNum = parseInt(valorDir || "0", 10) / 100;
 
   // Preview
   const usaCotas = !!cotas && !!precoAtual;
   const totalBRL = usaCotas
-    ? Number(cotas) * Number(precoAtual) * (moeda === "USD" ? ptax : 1)
-    : Number(valorDir) || 0;
+    ? Number(cotas) * precoNum * (moeda === "USD" ? ptax : 1)
+    : valorDirNum;
 
   async function salvar() {
     if (!nome) return;
@@ -73,10 +109,10 @@ function ModalAtivo({
       ticker: ticker || null,
       categoria,
       cotas: cotas ? Number(cotas) : null,
-      pm: pm ? Number(pm) : null,
-      preco_atual: precoAtual ? Number(precoAtual) : null,
+      pm: pmNum || null,
+      preco_atual: precoNum || null,
       moeda,
-      valor: cotas ? null : (valorDir ? Number(valorDir) : null),
+      valor: cotas ? null : (valorDirNum || null),
       obj: null,
       hidden: inv?.hidden ?? false,
     } as Record<string, unknown>;
@@ -94,14 +130,18 @@ function ModalAtivo({
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
       style={{ background: "rgba(0,0,0,0.5)" }} onClick={fechar}>
-      <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col max-h-[90vh]"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+      <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", maxHeight: "92vh" }}
         onClick={e => e.stopPropagation()}>
+
+        {/* Header fixo */}
         <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0"
           style={{ borderColor: "var(--border)" }}>
           <h3 className="font-semibold">{inv ? "Editar ativo" : "Novo ativo"}</h3>
           <button onClick={fechar} style={{ color: "var(--text-muted)" }}><X size={20} /></button>
         </div>
+
+        {/* Campos roláveis */}
         <div className="overflow-y-auto flex-1 p-4 flex flex-col gap-3">
           <label style={lbl}>
             Nome do ativo
@@ -138,29 +178,37 @@ function ModalAtivo({
             </label>
             <label style={lbl}>
               Preço atual ({moeda})
-              <input type="number" step="0.01" value={precoAtual} onChange={e => setPrecoAtual(e.target.value)}
-                placeholder="0,00" style={inp} />
+              <InputValor value={precoAtual} onChange={setPrecoAtual} style={inp} placeholder="0,00" />
             </label>
           </div>
+
+          {cotas && (
+            <label style={lbl}>
+              Preço médio ({moeda})
+              <InputValor value={pm} onChange={setPm} style={inp} placeholder="0,00" />
+            </label>
+          )}
 
           {!usaCotas && (
             <label style={lbl}>
               Valor total em BRL (alternativo)
-              <input type="number" step="0.01" value={valorDir} onChange={e => setValorDir(e.target.value)}
-                placeholder="0,00" style={inp} />
+              <InputValor value={valorDir} onChange={setValorDir} style={inp} placeholder="0,00" />
               <span className="text-xs" style={{ color: "var(--text-muted)" }}>Use quando não tem cotas (ex: CDB, poupança)</span>
             </label>
           )}
 
-          {(usaCotas || Number(valorDir) > 0) && (
+          {(usaCotas || valorDirNum > 0) && (
             <div className="rounded-xl px-4 py-2.5" style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
               <span className="text-xs" style={{ color: "var(--text-muted)" }}>Total estimado BRL: </span>
               <span className="text-sm font-bold" style={{ color: "#4caf82" }}>{brl(totalBRL)}</span>
             </div>
           )}
+        </div>
 
+        {/* Botão fixo na base */}
+        <div className="flex-shrink-0 px-4 pb-4 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
           <button onClick={salvar} disabled={salvando || !nome}
-            className="py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
+            className="w-full py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
             style={{ background: "var(--primary)", color: "#fff" }}>
             {salvando ? "Salvando…" : inv ? "Salvar alterações" : "Adicionar ativo"}
           </button>
@@ -287,24 +335,31 @@ export default function InvestimentosClient() {
       {pizzaData.length > 0 && (
         <div className="rounded-xl px-4 py-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <p className="text-sm font-semibold mb-2">Alocação</p>
-          <div className="flex gap-4 items-center">
-            <div className="flex-shrink-0" style={{ width: 120, height: 120 }}>
+          {/* flex com chart fixo à esquerda e legenda à direita com overflow controlado */}
+          <div style={{ display: "flex", gap: 12, alignItems: "center", overflow: "hidden" }}>
+            <div style={{ width: 110, height: 110, flexShrink: 0 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={pizzaData} cx="50%" cy="50%" outerRadius={55} dataKey="value" nameKey="label">
+                  <Pie data={pizzaData} cx="50%" cy="50%" outerRadius={50} dataKey="value" nameKey="label">
                     {pizzaData.map((d, i) => <Cell key={i} fill={d.cor} />)}
                   </Pie>
                   <Tooltip formatter={(v) => brl(Number(v))} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <div className="flex flex-col gap-1 flex-1">
+            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
               {pizzaData.map(d => (
-                <div key={d.cat} className="flex items-center gap-2 text-xs">
-                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: d.cor }} />
-                  <span className="flex-1 truncate" style={{ color: "var(--text-muted)" }}>{d.label}</span>
-                  <span className="font-medium">{totalGeral ? ((d.value / totalGeral) * 100).toFixed(0) : 0}%</span>
-                  <span style={{ color: "var(--text-muted)" }}>{brl(d.value)}</span>
+                <div key={d.cat} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: d.cor, flexShrink: 0 }} />
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-muted)" }}>
+                    {d.label}
+                  </span>
+                  <span style={{ flexShrink: 0, fontWeight: 600 }}>
+                    {totalGeral ? ((d.value / totalGeral) * 100).toFixed(0) : 0}%
+                  </span>
+                  <span style={{ flexShrink: 0, color: "var(--text-muted)", fontSize: 10 }}>
+                    {brl(d.value)}
+                  </span>
                 </div>
               ))}
             </div>
