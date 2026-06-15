@@ -131,7 +131,7 @@ function ModalAtivo({
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
       style={{ background: "rgba(0,0,0,0.5)" }} onClick={fechar}>
       <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)", maxHeight: "92vh" }}
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", maxHeight: "min(88dvh, 88vh)" }}
         onClick={e => e.stopPropagation()}>
 
         {/* Header fixo */}
@@ -142,7 +142,7 @@ function ModalAtivo({
         </div>
 
         {/* Campos roláveis */}
-        <div className="overflow-y-auto flex-1 p-4 flex flex-col gap-3">
+        <div className="overflow-y-auto p-4 flex flex-col gap-3" style={{ minHeight: 0, flex: "1 1 auto" }}>
           <label style={lbl}>
             Nome do ativo
             <input type="text" value={nome} onChange={e => setNome(e.target.value)}
@@ -215,6 +215,87 @@ function ModalAtivo({
         </div>
       </div>
     </div>
+  );
+}
+
+// —— Edição inline de meta de objetivo ——
+function MetaInline({ metaKey, valorAtual, workspaceId, onSalvo }: {
+  metaKey: "reserva" | "leilao" | "aluguel27" | "pgbl";
+  valorAtual: number; workspaceId: string; onSalvo: () => void;
+}) {
+  const [editando, setEditando] = useState(false);
+  const [cts, setCts] = useState(valorAtual ? String(Math.round(valorAtual * 100)) : "");
+  const [salvando, setSalvando] = useState(false);
+
+  async function salvar() {
+    setSalvando(true);
+    const novoValor = parseInt(cts || "0", 10) / 100;
+    await createClient().from("invest_metas")
+      .update({ [metaKey]: novoValor } as Record<string, unknown>)
+      .eq("workspace_id", workspaceId);
+    setEditando(false);
+    setSalvando(false);
+    onSalvo();
+  }
+
+  if (editando) {
+    return (
+      <input
+        autoFocus type="text" inputMode="numeric"
+        value={fmtCts(cts)}
+        onChange={e => setCts(e.target.value.replace(/\D/g, "").slice(0, 12))}
+        onBlur={salvar}
+        onKeyDown={e => { if (e.key === "Enter") salvar(); }}
+        disabled={salvando}
+        className="text-xs rounded px-1.5 py-0.5 w-24 outline-none text-right"
+        style={{ background: "var(--surface)", border: "1px solid var(--primary)", color: "var(--text)" }}
+      />
+    );
+  }
+  return (
+    <button onClick={() => { setCts(valorAtual ? String(Math.round(valorAtual * 100)) : ""); setEditando(true); }}
+      style={{ color: valorAtual > 0 ? "var(--text)" : "var(--primary)", fontWeight: 600 }}>
+      {valorAtual > 0 ? brl(valorAtual) : "definir meta"}
+    </button>
+  );
+}
+
+// —— Edição inline do PTAX ——
+function PtaxInline({ valorAtual, workspaceId, onSalvo }: {
+  valorAtual: number; workspaceId: string; onSalvo: () => void;
+}) {
+  const [editando, setEditando] = useState(false);
+  const [val, setVal] = useState(String(valorAtual));
+  const [salvando, setSalvando] = useState(false);
+
+  async function salvar() {
+    setSalvando(true);
+    await createClient().from("invest_metas")
+      .update({ ptax: Number(val) || valorAtual } as Record<string, unknown>)
+      .eq("workspace_id", workspaceId);
+    setEditando(false);
+    setSalvando(false);
+    onSalvo();
+  }
+
+  if (editando) {
+    return (
+      <input
+        autoFocus type="number" step="0.0001" value={val}
+        onChange={e => setVal(e.target.value)}
+        onBlur={salvar}
+        onKeyDown={e => { if (e.key === "Enter") salvar(); }}
+        disabled={salvando}
+        className="text-sm rounded px-1.5 py-0.5 w-24 outline-none text-right"
+        style={{ background: "var(--surface)", border: "1px solid var(--primary)", color: "var(--text)" }}
+      />
+    );
+  }
+  return (
+    <button onClick={() => { setVal(String(valorAtual)); setEditando(true); }}
+      className="text-sm font-semibold" style={{ color: "var(--primary)" }}>
+      R$ {valorAtual.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}
+    </button>
   );
 }
 
@@ -460,47 +541,51 @@ export default function InvestimentosClient() {
         );
       })}
 
-      {/* Objetivos */}
+      {/* Objetivos — editáveis */}
       {metas && (
         <div className="rounded-xl px-4 py-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex items-center gap-2 mb-3">
             <Target size={14} style={{ color: "var(--primary)" }} />
-            <p className="text-sm font-semibold">Objetivos</p>
+            <p className="text-sm font-semibold flex-1">Objetivos</p>
+            <span className="text-xs" style={{ color: "var(--text-muted)" }}>toque na meta para editar</span>
           </div>
-          <div className="flex flex-col gap-2">
-            {[
-              { label: "Reserva de emergência", meta: metas.reserva },
-              { label: "Fundo de leilão", meta: metas.leilao },
-              { label: "Aluguel 2027", meta: metas.aluguel27 },
-              { label: "PGBL", meta: metas.pgbl },
-            ]
-              .filter(o => o.meta > 0)
-              .map(obj => {
-                const atual = visiveis
-                  .filter(i => {
-                    if (obj.label === "Reserva de emergência") return i.obj === "reserva";
-                    if (obj.label === "Fundo de leilão") return i.obj === "leilao";
-                    if (obj.label === "Aluguel 2027") return i.obj === "aluguel27";
-                    if (obj.label === "PGBL") return i.categoria === "pgbl";
-                    return false;
-                  })
-                  .reduce((s, i) => s + valorAtual(i, ptax), 0);
-                const pct = obj.meta > 0 ? Math.min((atual / obj.meta) * 100, 100) : 0;
-                return (
-                  <div key={obj.label}>
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-xs" style={{ color: "var(--text-muted)" }}>{obj.label}</span>
-                      <span className="text-xs font-medium">
-                        {brl(atual)} <span style={{ color: "var(--text-muted)" }}>/ {brl(obj.meta)}</span>
-                      </span>
-                    </div>
-                    <div className="h-1.5 rounded-full" style={{ background: "var(--surface2)" }}>
-                      <div className="h-1.5 rounded-full transition-all"
-                        style={{ width: `${pct}%`, background: pct >= 100 ? "#4caf82" : "var(--primary)" }} />
-                    </div>
+          <div className="flex flex-col gap-3">
+            {([
+              { key: "reserva" as const, label: "Reserva de emergência", filtro: (i: Investimento) => i.obj === "reserva" },
+              { key: "leilao" as const, label: "Fundo de leilão", filtro: (i: Investimento) => i.obj === "leilao" },
+              { key: "aluguel27" as const, label: "Aluguel 2027", filtro: (i: Investimento) => i.obj === "aluguel27" },
+              { key: "pgbl" as const, label: "PGBL", filtro: (i: Investimento) => i.categoria === "pgbl" },
+            ]).map(obj => {
+              const meta = Number(metas[obj.key]) || 0;
+              const atual = visiveis.filter(obj.filtro).reduce((s, i) => s + valorAtual(i, ptax), 0);
+              const pct = meta > 0 ? Math.min((atual / meta) * 100, 100) : 0;
+              return (
+                <div key={obj.key}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs" style={{ color: "var(--text-muted)" }}>{obj.label}</span>
+                    <span className="text-xs font-medium">
+                      {brl(atual)} / <MetaInline metaKey={obj.key} valorAtual={meta}
+                        workspaceId={workspaceId!} onSalvo={carregar} />
+                    </span>
                   </div>
-                );
-              })}
+                  <div className="h-1.5 rounded-full" style={{ background: "var(--surface2)" }}>
+                    <div className="h-1.5 rounded-full transition-all"
+                      style={{ width: `${pct}%`, background: pct >= 100 ? "#4caf82" : "var(--primary)" }} />
+                  </div>
+                  {meta > 0 && (
+                    <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+                      {pct.toFixed(0)}% atingido
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* PTAX editável */}
+          <div className="flex items-center justify-between mt-3 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
+            <span className="text-xs" style={{ color: "var(--text-muted)" }}>Cotação USD (PTAX)</span>
+            <PtaxInline valorAtual={ptax} workspaceId={workspaceId!} onSalvo={carregar} />
           </div>
         </div>
       )}
