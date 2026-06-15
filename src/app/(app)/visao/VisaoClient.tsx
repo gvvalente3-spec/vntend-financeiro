@@ -10,6 +10,13 @@ import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { brl, mesAtual, mesDoLanc, formatData, MESES } from "@/lib/utils";
 import type { Lancamento, Conta, Cartao, Orcamento } from "@/types/database";
+import { iconeDaCategoria, corDaCategoria, type CatMeta } from "@/components/categoryIcons";
+
+// Tipo da árvore de categorias (tabela "categorias")
+interface CategoriaRow {
+  id: string; tipo: "despesa" | "receita";
+  cat: string; sub: string | null; subsub: string | null; ordem: number;
+}
 
 const PALETA = ["#2a8a72","#c9952d","#c0492f","#1d5c4f","#3b6ea5","#8a5cb8","#d17b3f","#b8456b","#5a7d3a","#6f7d77"];
 
@@ -70,63 +77,95 @@ function LimiteInline({ cat, sub, subsub, orcamentos, workspaceId, onSalvo }: {
 }
 
 // ——— Painel de orçamento ———
-function OrcamentosPanel({ lancamentos, orcamentos, workspaceId, onSalvo }: {
-  lancamentos: Lancamento[]; orcamentos: Orcamento[]; workspaceId: string; onSalvo: () => void;
+function OrcamentosPanel({ lancamentos, orcamentos, categorias, catMeta, workspaceId, onSalvo }: {
+  lancamentos: Lancamento[]; orcamentos: Orcamento[];
+  categorias: CategoriaRow[]; catMeta: CatMeta[];
+  workspaceId: string; onSalvo: () => void;
 }) {
   const [expandido, setExpandido] = useState<Record<string, boolean>>({});
 
-  const tree: Record<string, { total: number; subs: Record<string, { total: number; subsubs: Record<string, number> }> }> = {};
+  // Gastos realizados por categoria/sub
+  const tree: Record<string, { total: number; subs: Record<string, number> }> = {};
   lancamentos.filter(l => l.tipo === "despesa").forEach(l => {
     const cat = l.cat || "Sem categoria";
     const sub = l.sub || "";
-    const ss = l.subsub || "";
     if (!tree[cat]) tree[cat] = { total: 0, subs: {} };
     tree[cat].total += Number(l.valor);
-    if (sub) {
-      if (!tree[cat].subs[sub]) tree[cat].subs[sub] = { total: 0, subsubs: {} };
-      tree[cat].subs[sub].total += Number(l.valor);
-      if (ss) tree[cat].subs[sub].subsubs[ss] = (tree[cat].subs[sub].subsubs[ss] || 0) + Number(l.valor);
-    }
+    if (sub) tree[cat].subs[sub] = (tree[cat].subs[sub] || 0) + Number(l.valor);
   });
 
-  const totalMes = Object.values(tree).reduce((s, v) => s + v.total, 0);
-  if (!totalMes) return <p className="text-xs text-center py-4" style={{ color: "var(--text-muted)" }}>Nenhuma despesa este mês.</p>;
+  // TODAS as categorias de despesa cadastradas (mesmo sem gasto)
+  const todasCats = [...new Set(categorias.filter(c => c.tipo === "despesa").map(c => c.cat))];
+  // Inclui também categorias que aparecem em lançamentos mas não estão cadastradas
+  Object.keys(tree).forEach(c => { if (!todasCats.includes(c)) todasCats.push(c); });
+
+  if (todasCats.length === 0) {
+    return <p className="text-xs text-center py-4" style={{ color: "var(--text-muted)" }}>
+      Nenhuma categoria cadastrada. Adicione em Ajustes.
+    </p>;
+  }
+
+  // —— Totalizador: previsto vs realizado ——
+  const totalPrevisto = todasCats.reduce((s, cat) => s + calcLimite(cat, "", "", orcamentos), 0);
+  const totalRealizado = todasCats.reduce((s, cat) => s + (tree[cat]?.total || 0), 0);
+  const saldoOrc = totalPrevisto - totalRealizado;
 
   const toggle = (k: string) => setExpandido(e => ({ ...e, [k]: !e[k] }));
 
+  // Ordena: com gasto primeiro (por valor desc), depois sem gasto (alfabética)
+  const catsOrdenadas = [...todasCats].sort((a, b) => {
+    const ta = tree[a]?.total || 0;
+    const tb = tree[b]?.total || 0;
+    if (ta === 0 && tb === 0) return a.localeCompare(b);
+    return tb - ta;
+  });
+
   return (
     <div className="flex flex-col gap-1">
-      {Object.entries(tree).sort((a, b) => b[1].total - a[1].total).map(([cat, catData], idx) => {
-        const cor = PALETA[idx % PALETA.length];
+      {catsOrdenadas.map((cat, idx) => {
+        const catData = tree[cat] || { total: 0, subs: {} };
+        const Icone = iconeDaCategoria(cat, catMeta);
+        const cor = corDaCategoria(cat, catMeta) || PALETA[idx % PALETA.length];
         const lim = calcLimite(cat, "", "", orcamentos);
-        const pct = lim > 0 ? Math.min((catData.total / lim) * 100, 100) : (totalMes ? (catData.total / totalMes) * 100 : 0);
+        const pct = lim > 0 ? Math.min((catData.total / lim) * 100, 100) : 0;
         const estourou = lim > 0 && catData.total > lim;
         const aberta = expandido[cat];
+        const subsCadastradas = [...new Set(categorias.filter(c => c.tipo === "despesa" && c.cat === cat && c.sub).map(c => c.sub as string))];
+        const subsComGasto = Object.keys(catData.subs);
+        const todasSubs = [...new Set([...subsCadastradas, ...subsComGasto])];
 
         return (
           <div key={cat}>
             <button className="flex items-center gap-2 w-full text-left py-1.5" onClick={() => toggle(cat)}>
-              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: cor }} />
-              <span className="flex-1 text-sm truncate">{cat}</span>
+              <span className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
+                style={{ background: `${cor}1a`, color: cor }}>
+                <Icone size={13} />
+              </span>
+              <span className="flex-1 text-sm truncate" style={{ opacity: catData.total === 0 ? 0.6 : 1 }}>{cat}</span>
               <span className="text-sm font-semibold flex-shrink-0" style={{ color: estourou ? "var(--danger)" : "var(--text)" }}>
                 {brl(catData.total)}{lim > 0 ? <span className="text-xs font-normal" style={{ color: "var(--text-muted)" }}> / {brl(lim)}</span> : null}
               </span>
-              <ChevronDown size={13} style={{ color: "var(--text-muted)", transform: aberta ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
+              {todasSubs.length > 0 && (
+                <ChevronDown size={13} style={{ color: "var(--text-muted)", transform: aberta ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
+              )}
             </button>
 
-            <div className="h-1 rounded-full mb-1" style={{ background: "var(--surface2)" }}>
-              <div className="h-1 rounded-full transition-all" style={{ width: `${pct}%`, background: estourou ? "var(--danger)" : cor }} />
-            </div>
+            {lim > 0 && (
+              <div className="h-1 rounded-full mb-1" style={{ background: "var(--surface2)" }}>
+                <div className="h-1 rounded-full transition-all" style={{ width: `${pct}%`, background: estourou ? "var(--danger)" : cor }} />
+              </div>
+            )}
             <LimiteInline cat={cat} sub="" subsub="" orcamentos={orcamentos} workspaceId={workspaceId} onSalvo={onSalvo} />
 
-            {aberta && Object.entries(catData.subs).sort((a, b) => b[1].total - a[1].total).map(([sub, subData]) => {
+            {aberta && todasSubs.sort().map(sub => {
+              const subTotal = catData.subs[sub] || 0;
               const limSub = calcLimite(cat, sub, "", orcamentos);
-              const pctSub = limSub > 0 ? Math.min((subData.total / limSub) * 100, 100) : 0;
+              const pctSub = limSub > 0 ? Math.min((subTotal / limSub) * 100, 100) : 0;
               return (
-                <div key={sub} className="ml-4 mt-1">
+                <div key={sub} className="ml-8 mt-1">
                   <div className="flex items-center gap-2 py-1">
                     <span className="flex-1 text-xs" style={{ color: "var(--text-muted)" }}>{sub}</span>
-                    <span className="text-xs font-medium">{brl(subData.total)}{limSub > 0 ? <span style={{ color: "var(--text-muted)" }}> / {brl(limSub)}</span> : null}</span>
+                    <span className="text-xs font-medium">{brl(subTotal)}{limSub > 0 ? <span style={{ color: "var(--text-muted)" }}> / {brl(limSub)}</span> : null}</span>
                   </div>
                   {limSub > 0 && (
                     <div className="h-0.5 rounded-full mb-1" style={{ background: "var(--surface2)" }}>
@@ -140,24 +179,50 @@ function OrcamentosPanel({ lancamentos, orcamentos, workspaceId, onSalvo }: {
           </div>
         );
       })}
+
+      {/* —— Totalizador previsto / realizado —— */}
+      <div className="mt-2 pt-2 border-t flex flex-col gap-1" style={{ borderColor: "var(--border)" }}>
+        <div className="flex items-center justify-between">
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>Previsto (orçado)</span>
+          <span className="text-sm font-semibold">{brl(totalPrevisto)}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>Realizado (gasto)</span>
+          <span className="text-sm font-semibold" style={{ color: totalRealizado > totalPrevisto && totalPrevisto > 0 ? "var(--danger)" : "var(--text)" }}>
+            {brl(totalRealizado)}
+          </span>
+        </div>
+        <div className="flex items-center justify-between pt-1 border-t" style={{ borderColor: "var(--border)" }}>
+          <span className="text-xs font-semibold">Saldo do orçamento</span>
+          <span className="text-sm font-bold" style={{ color: saldoOrc < 0 ? "var(--danger)" : "#4caf82" }}>
+            {brl(saldoOrc)}
+          </span>
+        </div>
+      </div>
     </div>
   );
 }
 
-// ——— Item de lançamento ———
-function ItemLanc({ l }: { l: Lancamento }) {
+// ——— Item de lançamento (com ícone da categoria) ———
+function ItemLanc({ l, catMeta }: { l: Lancamento; catMeta: CatMeta[] }) {
+  const isRec = l.tipo === "receita";
+  const Icone = iconeDaCategoria(l.cat, catMeta);
+  const cor = isRec ? "#4caf82" : corDaCategoria(l.cat, catMeta);
   return (
     <div className="flex items-center gap-3 px-4 py-2.5 border-b last:border-0" style={{ borderColor: "var(--border)" }}>
-      <div className="w-1 self-stretch rounded-full flex-shrink-0" style={{ background: l.tipo === "receita" ? "#4caf82" : "var(--danger)" }} />
+      <span className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+        style={{ background: `${cor}1a`, color: cor }}>
+        <Icone size={17} />
+      </span>
       <div className="flex-1 min-w-0">
-        <p className="text-sm truncate">{l.descricao || (l.tipo === "receita" ? "Receita" : "Despesa")}</p>
+        <p className="text-sm truncate">{l.descricao || (isRec ? "Receita" : "Despesa")}</p>
         <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
           {l.cat}{l.sub ? ` › ${l.sub}` : ""} · {formatData(l.data)}
           {l.cartao_id && !l.pago ? " · em aberto" : ""}
         </p>
       </div>
-      <span className="text-sm font-semibold flex-shrink-0" style={{ color: l.tipo === "receita" ? "#4caf82" : "var(--danger)" }}>
-        {l.tipo === "receita" ? "+" : "−"}{brl(l.valor)}
+      <span className="text-sm font-semibold flex-shrink-0" style={{ color: isRec ? "#4caf82" : "var(--danger)" }}>
+        {isRec ? "+" : "−"}{brl(l.valor)}
       </span>
     </div>
   );
@@ -202,6 +267,8 @@ export default function VisaoClient() {
   const [contas, setContas] = useState<Conta[]>([]);
   const [cartoes, setCartoes] = useState<Cartao[]>([]);
   const [orcamentos, setOrcamentos] = useState<Orcamento[]>([]);
+  const [categorias, setCategorias] = useState<CategoriaRow[]>([]);
+  const [catMeta, setCatMeta] = useState<CatMeta[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [aberto, setAberto] = useState<"receita" | "despesa" | null>(null);
 
@@ -213,16 +280,20 @@ export default function VisaoClient() {
     if (!workspaceId) return;
     setCarregando(true);
     const supabase = createClient();
-    const [{ data: lancs }, { data: cts }, { data: carts }, { data: orcs }] = await Promise.all([
+    const [{ data: lancs }, { data: cts }, { data: carts }, { data: orcs }, { data: cat }, { data: cm }] = await Promise.all([
       supabase.from("lancamentos").select("*").eq("workspace_id", workspaceId).order("data", { ascending: false }),
       supabase.from("contas").select("*").eq("workspace_id", workspaceId),
       supabase.from("cartoes").select("*").eq("workspace_id", workspaceId),
       supabase.from("orcamentos").select("*").eq("workspace_id", workspaceId),
+      supabase.from("categorias").select("*").eq("workspace_id", workspaceId).order("ordem"),
+      supabase.from("cat_meta").select("*").eq("workspace_id", workspaceId),
     ]);
     setLancamentos((lancs || []) as unknown as Lancamento[]);
     setContas((cts || []) as unknown as Conta[]);
     setCartoes((carts || []) as unknown as Cartao[]);
     setOrcamentos((orcs || []) as unknown as Orcamento[]);
+    setCategorias((cat || []) as unknown as CategoriaRow[]);
+    setCatMeta((cm || []) as unknown as CatMeta[]);
     setCarregando(false);
   }, [workspaceId]);
 
@@ -377,7 +448,7 @@ export default function VisaoClient() {
               {q ? "Nenhuma receita encontrada." : "Nada lançado."}
             </p>
           ) : (
-            receitasFiltradas.map(l => <ItemLanc key={l.id} l={l} />)
+            receitasFiltradas.map(l => <ItemLanc key={l.id} l={l} catMeta={catMeta} />)
           )}
         </div>
       )}
@@ -441,7 +512,7 @@ export default function VisaoClient() {
                   {/* Itens — visíveis apenas quando expandido */}
                   {isOpen && (
                     <div className="border-t" style={{ borderColor: "var(--border)" }}>
-                      {g.itens.map(l => <ItemLanc key={l.id} l={l} />)}
+                      {g.itens.map(l => <ItemLanc key={l.id} l={l} catMeta={catMeta} />)}
                     </div>
                   )}
                 </div>
@@ -488,6 +559,8 @@ export default function VisaoClient() {
             <OrcamentosPanel
               lancamentos={doMes}
               orcamentos={orcamentos}
+              categorias={categorias}
+              catMeta={catMeta}
               workspaceId={workspaceId}
               onSalvo={carregar}
             />
