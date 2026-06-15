@@ -2,33 +2,20 @@
 
 import { useEffect, useState, useCallback } from "react";
 import {
-  Plus, Search, X, TrendingUp, TrendingDown, CreditCard, Wallet,
-  FileText, ChevronDown, ChevronLeft, ChevronRight, Pencil, Trash2,
+  Plus, Search, X, TrendingUp, TrendingDown,
+  FileText, ChevronLeft, ChevronRight, Pencil, Trash2,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { brl, mesAtual, mesDoLanc, formatData, MESES } from "@/lib/utils";
 import type { Lancamento, Conta, Cartao } from "@/types/database";
+import { iconeDaCategoria, corDaCategoria, type CatMeta } from "@/components/categoryIcons";
 import RegistrarContracheque from "./RegistrarContracheque";
 
-// —— Helpers ——
-
-function matchSearch(l: Lancamento, ql: string): boolean {
-  if (!ql) return true;
-  if ((l.descricao || "").toLowerCase().includes(ql)) return true;
-  if ((l.cat || "").toLowerCase().includes(ql)) return true;
-  if ((l.sub || "").toLowerCase().includes(ql)) return true;
-  if (formatData(l.data).includes(ql)) return true;
-  // Busca por valor (ex: "1500" ou "1.500")
-  const isNum = /^[\d,\.]+$/.test(ql);
-  if (isNum) {
-    const qd = ql.replace(/\D/g, "");
-    if (qd.length >= 2) {
-      const vd = brl(Number(l.valor)).replace(/\D/g, "");
-      if (vd.startsWith(qd)) return true;
-    }
-  }
-  return false;
+// Tipo da árvore de categorias (tabela "categorias")
+interface CategoriaRow {
+  id: string; tipo: "despesa" | "receita";
+  cat: string; sub: string | null; subsub: string | null; ordem: number;
 }
 
 // —— InputValor: centavos automáticos (29550 → 295,50) ——
@@ -37,46 +24,44 @@ function fmtCts(digits: string): string {
   if (!digits) return "";
   return (n / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-function InputValor({ value, onChange, style, placeholder, autoFocus }: {
+function InputValor({ value, onChange, style, autoFocus }: {
   value: string; onChange: (d: string) => void;
-  style?: React.CSSProperties; placeholder?: string; autoFocus?: boolean;
+  style?: React.CSSProperties; autoFocus?: boolean;
 }) {
   return (
     <input
-      type="text"
-      inputMode="numeric"
-      autoFocus={autoFocus}
+      type="text" inputMode="numeric" autoFocus={autoFocus}
       value={fmtCts(value)}
-      onChange={e => {
-        const d = e.target.value.replace(/\D/g, "").slice(0, 12);
-        onChange(d);
-      }}
-      placeholder={placeholder ?? "0,00"}
-      style={style}
+      onChange={e => onChange(e.target.value.replace(/\D/g, "").slice(0, 12))}
+      placeholder="0,00" style={style}
     />
   );
 }
 
-// —— Campo de busca reutilizável ——
-function CampoBusca({
-  value, onChange, placeholder,
-}: { value: string; onChange: (v: string) => void; placeholder: string }) {
+function matchSearch(l: Lancamento, ql: string): boolean {
+  if (!ql) return true;
+  if ((l.descricao || "").toLowerCase().includes(ql)) return true;
+  if ((l.cat || "").toLowerCase().includes(ql)) return true;
+  if ((l.sub || "").toLowerCase().includes(ql)) return true;
+  if (formatData(l.data).includes(ql)) return true;
+  const isNum = /^[\d,\.]+$/.test(ql);
+  if (isNum) {
+    const qd = ql.replace(/\D/g, "");
+    if (qd.length >= 2 && brl(Number(l.valor)).replace(/\D/g, "").startsWith(qd)) return true;
+  }
+  return false;
+}
+
+// —— Campo de busca ——
+function CampoBusca({ value, onChange, placeholder }: {
+  value: string; onChange: (v: string) => void; placeholder: string;
+}) {
   return (
     <div className="relative">
-      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-        style={{ color: "var(--text-muted)" }} />
-      <input
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
+      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
+      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
         className="w-full rounded-xl text-sm outline-none"
-        style={{
-          background: "var(--surface2)",
-          border: "1px solid var(--border)",
-          color: "var(--text)",
-          padding: "8px 36px",
-        }}
-      />
+        style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", padding: "8px 36px" }} />
       {value && (
         <button onClick={() => onChange("")} className="absolute right-3 top-1/2 -translate-y-1/2">
           <X size={13} style={{ color: "var(--text-muted)" }} />
@@ -86,16 +71,21 @@ function CampoBusca({
   );
 }
 
-// —— Item de lançamento na lista ——
-function ItemLanc({
-  l, onEditar, onDeletar,
-}: { l: Lancamento; onEditar: (l: Lancamento) => void; onDeletar: (id: string) => void }) {
+// —— Item de lançamento (com ícone da categoria) ——
+function ItemLanc({ l, catMeta, onEditar, onDeletar }: {
+  l: Lancamento; catMeta: CatMeta[];
+  onEditar: (l: Lancamento) => void; onDeletar: (id: string) => void;
+}) {
   const isRec = l.tipo === "receita";
-  const cor = isRec ? "#4caf82" : "var(--danger)";
+  const Icone = iconeDaCategoria(l.cat, catMeta);
+  const cor = isRec ? "#4caf82" : corDaCategoria(l.cat, catMeta);
   return (
-    <div className="flex items-center gap-3 px-4 py-2.5 border-b last:border-0"
-      style={{ borderColor: "var(--border)" }}>
-      <div className="w-1 self-stretch rounded-full flex-shrink-0" style={{ background: cor }} />
+    <div className="flex items-center gap-3 px-4 py-2.5 border-b last:border-0" style={{ borderColor: "var(--border)" }}>
+      {/* Ícone da categoria */}
+      <span className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+        style={{ background: `${cor}1a`, color: cor }}>
+        <Icone size={17} />
+      </span>
       <div className="flex-1 min-w-0">
         <p className="text-sm truncate">{l.descricao || (isRec ? "Receita" : "Despesa")}</p>
         <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
@@ -103,43 +93,32 @@ function ItemLanc({
           {l.cartao_id && !l.pago ? " · em aberto" : ""}
         </p>
       </div>
-      <span className="text-sm font-semibold flex-shrink-0 mr-1" style={{ color: cor }}>
+      <span className="text-sm font-semibold flex-shrink-0 mr-1" style={{ color: isRec ? "#4caf82" : "var(--danger)" }}>
         {isRec ? "+" : "−"}{brl(Number(l.valor))}
       </span>
       <div className="flex gap-1 flex-shrink-0">
-        <button onClick={() => onEditar(l)} style={{ color: "var(--text-muted)" }}>
-          <Pencil size={13} />
-        </button>
-        <button onClick={() => onDeletar(l.id)} style={{ color: "var(--text-muted)" }}>
-          <Trash2 size={13} />
-        </button>
+        <button onClick={() => onEditar(l)} style={{ color: "var(--text-muted)" }}><Pencil size={13} /></button>
+        <button onClick={() => onDeletar(l.id)} style={{ color: "var(--text-muted)" }}><Trash2 size={13} /></button>
       </div>
     </div>
   );
 }
 
-// —— Modal de lançamento (novo / editar) ——
 const inp = {
   background: "var(--surface2)", border: "1px solid var(--border)",
   color: "var(--text)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 14,
 };
 const lbl: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "var(--text-muted)" };
 
-function ModalLanc({
-  workspaceId, contas, cartoes, lancamento, fechar, onSalvo,
-}: {
+// —— Modal de lançamento ——
+function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fechar, onSalvo }: {
   workspaceId: string;
-  contas: Conta[];
-  cartoes: Cartao[];
+  contas: Conta[]; cartoes: Cartao[]; categorias: CategoriaRow[];
   lancamento?: Lancamento | null;
-  fechar: () => void;
-  onSalvo: () => void;
+  fechar: () => void; onSalvo: () => void;
 }) {
   const [tipo, setTipo] = useState<"receita" | "despesa">(lancamento?.tipo || "despesa");
-  // Valor armazenado em centavos (string de dígitos): "29550" = R$ 295,50
-  const [valorCts, setValorCts] = useState(
-    lancamento ? String(Math.round(Number(lancamento.valor) * 100)) : ""
-  );
+  const [valorCts, setValorCts] = useState(lancamento ? String(Math.round(Number(lancamento.valor) * 100)) : "");
   const [descricao, setDescricao] = useState(lancamento?.descricao || "");
   const [data, setData] = useState(lancamento?.data || new Date().toISOString().slice(0, 10));
   const [cat, setCat] = useState(lancamento?.cat || "");
@@ -151,28 +130,27 @@ function ModalLanc({
 
   const valorNum = parseInt(valorCts || "0", 10) / 100;
 
+  // Categorias filtradas pelo tipo selecionado
+  const catsDoTipo = categorias.filter(c => c.tipo === tipo);
+  // Categorias de nível 1 (cat distintas)
+  const cats1 = [...new Set(catsDoTipo.map(c => c.cat))].sort();
+  // Subcategorias da categoria escolhida
+  const subs = cat
+    ? [...new Set(catsDoTipo.filter(c => c.cat === cat && c.sub).map(c => c.sub as string))].sort()
+    : [];
+
   async function salvar() {
-    if (!valorCts || !data) return;
+    if (!valorCts || !data || !cat) return;
     setSalvando(true);
     const supabase = createClient();
     const payload = {
-      workspace_id: workspaceId,
-      tipo,
-      valor: valorNum,
-      descricao: descricao || null,
-      data,
-      cat: cat || null,
-      sub: sub || null,
-      subsub: null,
+      workspace_id: workspaceId, tipo, valor: valorNum,
+      descricao: descricao || null, data,
+      cat, sub: sub || null, subsub: null,
       conta_id: contaId || null,
       cartao_id: tipo === "despesa" ? (cartaoId || null) : null,
-      pago,
-      fiscal: "",
-      rec_id: null,
-      parcela_num: null,
-      parcela_total: null,
+      pago, fiscal: "", rec_id: null, parcela_num: null, parcela_total: null,
     } as Record<string, unknown>;
-
     if (lancamento?.id) {
       await supabase.from("lancamentos").update(payload).eq("id", lancamento.id);
     } else {
@@ -187,26 +165,29 @@ function ModalLanc({
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
       style={{ background: "rgba(0,0,0,0.5)" }} onClick={fechar}>
       <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)", maxHeight: "92vh" }}
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          maxHeight: "min(88dvh, 88vh)",
+          height: "auto",
+        }}
         onClick={e => e.stopPropagation()}>
 
         {/* Header fixo */}
-        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0"
-          style={{ borderColor: "var(--border)" }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: "var(--border)" }}>
           <h3 className="font-semibold">{lancamento ? "Editar lançamento" : "Novo lançamento"}</h3>
           <button onClick={fechar} style={{ color: "var(--text-muted)" }}><X size={20} /></button>
         </div>
 
         {/* Campos roláveis */}
-        <div className="overflow-y-auto flex-1 p-4 flex flex-col gap-3">
+        <div className="overflow-y-auto p-4 flex flex-col gap-3" style={{ minHeight: 0, flex: "1 1 auto" }}>
           <div className="grid grid-cols-2 gap-2">
             {(["receita", "despesa"] as const).map(t => (
-              <button key={t} onClick={() => setTipo(t)}
+              <button key={t} onClick={() => { setTipo(t); setCat(""); setSub(""); }}
                 className="py-2 rounded-xl text-sm font-medium"
                 style={{
                   background: tipo === t ? (t === "receita" ? "#4caf82" : "var(--danger)") : "var(--surface2)",
-                  color: tipo === t ? "#fff" : "var(--text-muted)",
-                  border: "1px solid var(--border)",
+                  color: tipo === t ? "#fff" : "var(--text-muted)", border: "1px solid var(--border)",
                 }}>
                 {t === "receita" ? "Receita" : "Despesa"}
               </button>
@@ -229,16 +210,21 @@ function ModalLanc({
             <input type="date" value={data} onChange={e => setData(e.target.value)} style={inp} />
           </label>
 
+          {/* Categoria via SELECT carregado da tabela */}
           <div className="grid grid-cols-2 gap-2">
             <label style={lbl}>
               Categoria
-              <input type="text" value={cat} onChange={e => setCat(e.target.value)}
-                placeholder="Ex: Alimentação" style={inp} />
+              <select value={cat} onChange={e => { setCat(e.target.value); setSub(""); }} style={inp}>
+                <option value="">Selecione…</option>
+                {cats1.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
             </label>
             <label style={lbl}>
               Subcategoria
-              <input type="text" value={sub} onChange={e => setSub(e.target.value)}
-                placeholder="Opcional" style={inp} />
+              <select value={sub} onChange={e => setSub(e.target.value)} style={inp} disabled={subs.length === 0}>
+                <option value="">{subs.length === 0 ? "—" : "Opcional"}</option>
+                {subs.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
             </label>
           </div>
 
@@ -275,12 +261,12 @@ function ModalLanc({
           )}
         </div>
 
-        {/* Botão fixo na base — sempre visível */}
-        <div className="flex-shrink-0 px-4 pb-4 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
-          <button onClick={salvar} disabled={salvando || !valorCts || !data}
+        {/* Botão fixo */}
+        <div className="flex-shrink-0 px-4 pb-5 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
+          <button onClick={salvar} disabled={salvando || !valorCts || !data || !cat}
             className="w-full py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
             style={{ background: "var(--primary)", color: "#fff" }}>
-            {salvando ? "Salvando…" : lancamento ? "Salvar alterações" : "Registrar"}
+            {salvando ? "Salvando…" : !cat ? "Escolha uma categoria" : lancamento ? "Salvar alterações" : "Registrar"}
           </button>
         </div>
       </div>
@@ -295,9 +281,10 @@ export default function LancamentosClient() {
   const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
   const [contas, setContas] = useState<Conta[]>([]);
   const [cartoes, setCartoes] = useState<Cartao[]>([]);
+  const [categorias, setCategorias] = useState<CategoriaRow[]>([]);
+  const [catMeta, setCatMeta] = useState<CatMeta[]>([]);
   const [carregando, setCarregando] = useState(true);
 
-  // UI state
   const [modalAberto, setModalAberto] = useState(false);
   const [lancamentoEd, setLancamentoEd] = useState<Lancamento | null>(null);
   const [contrachequeAberto, setContrachequeAberto] = useState(false);
@@ -308,15 +295,18 @@ export default function LancamentosClient() {
     if (!workspaceId) return;
     setCarregando(true);
     const supabase = createClient();
-    const [{ data: lancs }, { data: cts }, { data: carts }] = await Promise.all([
-      supabase.from("lancamentos").select("*").eq("workspace_id", workspaceId)
-        .order("data", { ascending: false }),
+    const [{ data: lancs }, { data: cts }, { data: carts }, { data: cat }, { data: cm }] = await Promise.all([
+      supabase.from("lancamentos").select("*").eq("workspace_id", workspaceId).order("data", { ascending: false }),
       supabase.from("contas").select("*").eq("workspace_id", workspaceId),
       supabase.from("cartoes").select("*").eq("workspace_id", workspaceId),
+      supabase.from("categorias").select("*").eq("workspace_id", workspaceId).order("ordem"),
+      supabase.from("cat_meta").select("*").eq("workspace_id", workspaceId),
     ]);
     setLancamentos((lancs || []) as unknown as Lancamento[]);
     setContas((cts || []) as unknown as Conta[]);
     setCartoes((carts || []) as unknown as Cartao[]);
+    setCategorias((cat || []) as unknown as CategoriaRow[]);
+    setCatMeta((cm || []) as unknown as CatMeta[]);
     setCarregando(false);
   }, [workspaceId]);
 
@@ -339,12 +329,9 @@ export default function LancamentosClient() {
 
   const [ano, mesNum] = mes.split("-").map(Number);
   const labelMes = `${MESES[mesNum - 1]}/${ano}`;
-
   const doMes = lancamentos.filter(l => mesDoLanc(l.data) === mes);
   const ql = searchQuery.toLowerCase().trim();
-  const filtrados = doMes
-    .filter(l => aba === "todos" || l.tipo === aba)
-    .filter(l => matchSearch(l, ql));
+  const filtrados = doMes.filter(l => aba === "todos" || l.tipo === aba).filter(l => matchSearch(l, ql));
 
   const totalReceitas = doMes.filter(l => l.tipo === "receita").reduce((s, l) => s + Number(l.valor), 0);
   const totalDespesas = doMes.filter(l => l.tipo === "despesa").reduce((s, l) => s + Number(l.valor), 0);
@@ -355,16 +342,14 @@ export default function LancamentosClient() {
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-4 flex flex-col gap-4">
-
       {/* Seletor de mês */}
-      <div className="flex items-center justify-between rounded-xl px-4 py-2"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      <div className="flex items-center justify-between rounded-xl px-4 py-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
         <button onClick={() => mudarMes(-1)} style={{ color: "var(--text-muted)" }}><ChevronLeft size={20} /></button>
         <span className="font-medium capitalize text-sm">{labelMes}</span>
         <button onClick={() => mudarMes(1)} style={{ color: "var(--text-muted)" }}><ChevronRight size={20} /></button>
       </div>
 
-      {/* Resumo do mês */}
+      {/* Resumo */}
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded-xl px-4 py-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <div className="flex items-center gap-1.5 mb-1">
@@ -382,7 +367,7 @@ export default function LancamentosClient() {
         </div>
       </div>
 
-      {/* Botões de ação */}
+      {/* Ações */}
       <div className="grid grid-cols-2 gap-2">
         <button onClick={abrirNovo}
           className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
@@ -396,24 +381,20 @@ export default function LancamentosClient() {
         </button>
       </div>
 
-      {/* Filtros de tipo */}
+      {/* Filtros */}
       <div className="flex gap-1 rounded-xl p-1" style={{ background: "var(--surface2)" }}>
         {([["todos", "Todos"], ["receita", "Receitas"], ["despesa", "Despesas"]] as const).map(([v, label]) => (
           <button key={v} onClick={() => setAba(v)}
             className="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
-            style={{
-              background: aba === v ? "var(--surface)" : "transparent",
-              color: aba === v ? "var(--text)" : "var(--text-muted)",
-            }}>
+            style={{ background: aba === v ? "var(--surface)" : "transparent", color: aba === v ? "var(--text)" : "var(--text-muted)" }}>
             {label}
           </button>
         ))}
       </div>
 
-      {/* Campo de busca */}
+      {/* Busca */}
       <div className="flex flex-col gap-1">
-        <CampoBusca value={searchQuery} onChange={v => setSearchQuery(v)}
-          placeholder="Buscar por descrição, categoria, data ou valor…" />
+        <CampoBusca value={searchQuery} onChange={setSearchQuery} placeholder="Buscar por descrição, categoria, data ou valor…" />
         {ql && (
           <p className="text-xs px-1" style={{ color: "var(--text-muted)" }}>
             {filtrados.length} resultado(s)
@@ -422,7 +403,7 @@ export default function LancamentosClient() {
         )}
       </div>
 
-      {/* Lista de lançamentos */}
+      {/* Lista */}
       <div className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
         {filtrados.length === 0 ? (
           <p className="text-sm text-center py-8" style={{ color: "var(--text-muted)" }}>
@@ -430,7 +411,7 @@ export default function LancamentosClient() {
           </p>
         ) : (
           filtrados.map(l => (
-            <ItemLanc key={l.id} l={l} onEditar={abrirEditar} onDeletar={deletar} />
+            <ItemLanc key={l.id} l={l} catMeta={catMeta} onEditar={abrirEditar} onDeletar={deletar} />
           ))
         )}
       </div>
@@ -439,20 +420,14 @@ export default function LancamentosClient() {
       {modalAberto && (
         <ModalLanc
           workspaceId={workspaceId!}
-          contas={contas}
-          cartoes={cartoes}
+          contas={contas} cartoes={cartoes} categorias={categorias}
           lancamento={lancamentoEd}
           fechar={() => setModalAberto(false)}
           onSalvo={carregar}
         />
       )}
-
       {contrachequeAberto && workspaceId && (
-        <RegistrarContracheque
-          workspaceId={workspaceId}
-          fechar={() => setContrachequeAberto(false)}
-          onSalvo={carregar}
-        />
+        <RegistrarContracheque workspaceId={workspaceId} fechar={() => setContrachequeAberto(false)} onSalvo={carregar} />
       )}
     </div>
   );
