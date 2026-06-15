@@ -9,8 +9,8 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { brl, mesAtual, mesDoLanc, formatData, MESES } from "@/lib/utils";
-import type { Lancamento, Cartao, Orcamento } from "@/types/database";
-import { iconeDaCategoria, corDaCategoria, type CatMeta } from "@/components/layout/categoryIcons";
+import type { Lancamento, Conta, Cartao, Orcamento } from "@/types/database";
+import { iconeDaCategoria, corDaCategoria, type CatMeta } from "@/components/categoryIcons";
 
 // Tipo da árvore de categorias (tabela "categorias")
 interface CategoriaRow {
@@ -264,6 +264,7 @@ export default function VisaoClient() {
   const { workspaceId, loading: wsLoading } = useWorkspace();
   const [mes, setMes] = useState(mesAtual());
   const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
+  const [contas, setContas] = useState<Conta[]>([]);
   const [cartoes, setCartoes] = useState<Cartao[]>([]);
   const [orcamentos, setOrcamentos] = useState<Orcamento[]>([]);
   const [categorias, setCategorias] = useState<CategoriaRow[]>([]);
@@ -279,14 +280,16 @@ export default function VisaoClient() {
     if (!workspaceId) return;
     setCarregando(true);
     const supabase = createClient();
-    const [{ data: lancs }, { data: carts }, { data: orcs }, { data: cat }, { data: cm }] = await Promise.all([
+    const [{ data: lancs }, { data: cts }, { data: carts }, { data: orcs }, { data: cat }, { data: cm }] = await Promise.all([
       supabase.from("lancamentos").select("*").eq("workspace_id", workspaceId).order("data", { ascending: false }),
+      supabase.from("contas").select("*").eq("workspace_id", workspaceId),
       supabase.from("cartoes").select("*").eq("workspace_id", workspaceId),
       supabase.from("orcamentos").select("*").eq("workspace_id", workspaceId),
       supabase.from("categorias").select("*").eq("workspace_id", workspaceId).order("ordem"),
       supabase.from("cat_meta").select("*").eq("workspace_id", workspaceId),
     ]);
     setLancamentos((lancs || []) as unknown as Lancamento[]);
+    setContas((cts || []) as unknown as Conta[]);
     setCartoes((carts || []) as unknown as Cartao[]);
     setOrcamentos((orcs || []) as unknown as Orcamento[]);
     setCategorias((cat || []) as unknown as CategoriaRow[]);
