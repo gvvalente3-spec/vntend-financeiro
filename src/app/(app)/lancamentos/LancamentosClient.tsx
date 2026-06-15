@@ -18,7 +18,9 @@ function fmtCts(digits: string): string {
 }
 
 function InputValor({ value, onChange, style, autoFocus }: { value: string; onChange: (d: string) => void; style?: React.CSSProperties; autoFocus?: boolean; }) {
-  return <input type="text" inputMode="numeric" autoFocus={autoFocus} value={fmtCts(value)} onChange={e => onChange(e.target.value.replace(/\D/g, "").slice(0, 12))} placeholder="0,00" style={style} />;
+  return (
+    <input type="text" inputMode="numeric" autoFocus={autoFocus} value={fmtCts(value)} onChange={e => onChange(e.target.value.replace(/\D/g, "").slice(0, 12))} placeholder="0,00" style={style} />
+  );
 }
 
 function matchSearch(l: Lancamento, ql: string): boolean {
@@ -65,31 +67,116 @@ function ItemLanc({ l, catMeta, onEditar, onDeletar }: { l: Lancamento; catMeta:
   );
 }
 
-// ... Resto da estrutura do Modal e Componente (mantive o que você já tinha, apenas a otimização de select na função abaixo)
+const inp = { background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 14 };
+const lbl: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "var(--text-muted)" };
+
+function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fechar, onSalvo }: { workspaceId: string; contas: Conta[]; cartoes: Cartao[]; categorias: CategoriaRow[]; lancamento?: Lancamento | null; fechar: () => void; onSalvo: () => void; }) {
+  const [tipo, setTipo] = useState<"receita" | "despesa">(lancamento?.tipo || "despesa");
+  const [valorCts, setValorCts] = useState(lancamento ? String(Math.round(Number(lancamento.valor) * 100)) : "");
+  const [descricao, setDescricao] = useState(lancamento?.descricao || "");
+  const [data, setData] = useState(lancamento?.data || new Date().toISOString().slice(0, 10));
+  const [cat, setCat] = useState(lancamento?.cat || "");
+  const [sub, setSub] = useState(lancamento?.sub || "");
+  const [contaId, setContaId] = useState(lancamento?.conta_id || "");
+  const [cartaoId, setCartaoId] = useState(lancamento?.cartao_id || "");
+  const [pago, setPago] = useState(lancamento?.pago ?? true);
+  const [salvando, setSalvando] = useState(false);
+  const valorNum = parseInt(valorCts || "0", 10) / 100;
+  const catsDoTipo = categorias.filter(c => c.tipo === tipo);
+  const cats1 = [...new Set(catsDoTipo.map(c => c.cat))].sort();
+  const subs = cat ? [...new Set(catsDoTipo.filter(c => c.cat === cat && c.sub).map(c => c.sub as string))].sort() : [];
+
+  async function salvar() {
+    if (!valorCts || !data || !cat) return;
+    setSalvando(true);
+    const supabase = createClient();
+    const payload = { workspace_id: workspaceId, tipo, valor: valorNum, descricao: descricao || null, data, cat, sub: sub || null, subsub: null, conta_id: contaId || null, cartao_id: tipo === "despesa" ? (cartaoId || null) : null, pago, fiscal: "", rec_id: null, parcela_num: null, parcela_total: null } as Record<string, unknown>;
+    if (lancamento?.id) await supabase.from("lancamentos").update(payload).eq("id", lancamento.id);
+    else await supabase.from("lancamentos").insert(payload);
+    onSalvo(); fechar(); setSalvando(false);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center pb-12 sm:pb-0" style={{ background: "rgba(0,0,0,0.5)" }} onClick={fechar}>
+      <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col" style={{ background: "var(--surface)", border: "1px solid var(--border)", maxHeight: "80vh", height: "auto" }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: "var(--border)" }}><h3 className="font-semibold">{lancamento ? "Editar" : "Novo"}</h3><button onClick={fechar}><X size={20} /></button></div>
+        <div className="overflow-y-auto p-4 flex flex-col gap-3" style={{ minHeight: 0, flex: "1 1 auto" }}>
+          <div className="grid grid-cols-2 gap-2">
+            {(["receita", "despesa"] as const).map(t => <button key={t} onClick={() => { setTipo(t); setCat(""); setSub(""); }} className="py-2 rounded-xl text-sm font-medium" style={{ background: tipo === t ? (t === "receita" ? "#4caf82" : "var(--danger)") : "var(--surface2)", color: tipo === t ? "#fff" : "var(--text-muted)", border: "1px solid var(--border)" }}>{t === "receita" ? "Receita" : "Despesa"}</button>)}
+          </div>
+          <label style={lbl}>Valor (R$)<InputValor value={valorCts} onChange={setValorCts} style={inp} autoFocus /></label>
+          <label style={lbl}>Descrição<input type="text" value={descricao} onChange={e => setDescricao(e.target.value)} style={inp} /></label>
+          <label style={lbl}>Data<input type="date" value={data} onChange={e => setData(e.target.value)} style={inp} /></label>
+          <div className="grid grid-cols-2 gap-2">
+            <label style={lbl}>Categoria<select value={cat} onChange={e => { setCat(e.target.value); setSub(""); }} style={inp}><option value="">Selecione…</option>{cats1.map(c => <option key={c} value={c}>{c}</option>)}</select></label>
+            <label style={lbl}>Subcategoria<select value={sub} onChange={e => setSub(e.target.value)} style={inp} disabled={subs.length === 0}><option value="">{subs.length === 0 ? "—" : "Opcional"}</option>{subs.map(s => <option key={s} value={s}>{s}</option>)}</select></label>
+          </div>
+        </div>
+        <div className="flex-shrink-0 px-4 pb-5 pt-3 border-t" style={{ borderColor: "var(--border)" }}><button onClick={salvar} disabled={salvando || !valorCts || !data || !cat} className="w-full py-2.5 rounded-xl text-sm font-semibold" style={{ background: "var(--primary)", color: "#fff" }}>{salvando ? "Salvando…" : "Salvar"}</button></div>
+      </div>
+    </div>
+  );
+}
 
 export default function LancamentosClient() {
   const { workspaceId, loading: wsLoading } = useWorkspace();
-  // ... (Estados mantidos)
-  
+  const [mes, setMes] = useState(mesAtual());
+  const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
+  const [contas, setContas] = useState<Conta[]>([]);
+  const [cartoes, setCartoes] = useState<Cartao[]>([]);
+  const [categorias, setCategorias] = useState<CategoriaRow[]>([]);
+  const [catMeta, setCatMeta] = useState<CatMeta[]>([]);
+  const [carregando, setCarregando] = useState(true);
+  const [modalAberto, setModalAberto] = useState(false);
+  const [lancamentoEd, setLancamentoEd] = useState<Lancamento | null>(null);
+  const [contrachequeAberto, setContrachequeAberto] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [aba, setAba] = useState<"todos" | "receita" | "despesa">("todos");
+
   const carregar = useCallback(async () => {
     if (!workspaceId) return;
     setCarregando(true);
     const supabase = createClient();
-    // OTIMIZAÇÃO: selecionando apenas campos vitais
     const [{ data: lancs }, { data: cts }, { data: carts }, { data: cat }, { data: cm }] = await Promise.all([
-      supabase.from("lancamentos")
-        .select("id, tipo, valor, descricao, data, cat, sub, conta_id, cartao_id, pago")
-        .eq("workspace_id", workspaceId).order("data", { ascending: false }),
+      supabase.from("lancamentos").select("id, tipo, valor, descricao, data, cat, sub, conta_id, cartao_id, pago").eq("workspace_id", workspaceId).order("data", { ascending: false }),
       supabase.from("contas").select("id, nome").eq("workspace_id", workspaceId),
       supabase.from("cartoes").select("id, nome").eq("workspace_id", workspaceId),
       supabase.from("categorias").select("id, tipo, cat, sub, subsub").eq("workspace_id", workspaceId).order("ordem"),
       supabase.from("cat_meta").select("chave, cor, icone").eq("workspace_id", workspaceId),
     ]);
-    // ... (restante da função)
     setLancamentos((lancs || []) as unknown as Lancamento[]);
-    // ... (setters)
+    setContas((cts || []) as unknown as Conta[]);
+    setCartoes((carts || []) as unknown as Cartao[]);
+    setCategorias((cat || []) as unknown as CategoriaRow[]);
+    setCatMeta((cm || []) as unknown as CatMeta[]);
     setCarregando(false);
   }, [workspaceId]);
 
-  // ... (restante do componente)
+  useEffect(() => { carregar(); }, [carregar]);
+
+  async function deletar(id: string) {
+    if (!confirm("Remover?")) return;
+    await createClient().from("lancamentos").delete().eq("id", id);
+    setLancamentos(l => l.filter(x => x.id !== id));
+  }
+
+  const labelMes = `${MESES[parseInt(mes.split("-")[1]) - 1]}/${mes.split("-")[0]}`;
+  const filtrados = lancamentos.filter(l => mesDoLanc(l.data) === mes && (aba === "todos" || l.tipo === aba) && matchSearch(l, searchQuery.toLowerCase()));
+
+  if (wsLoading || carregando) return <div className="p-10 text-center">Carregando...</div>;
+
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-4 flex flex-col gap-4">
+      <div className="flex items-center justify-between rounded-xl px-4 py-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+        <button onClick={() => mudarMes(-1)}><ChevronLeft size={20} /></button>
+        <span className="font-medium text-sm capitalize">{labelMes}</span>
+        <button onClick={() => mudarMes(1)}><ChevronRight size={20} /></button>
+      </div>
+      <button onClick={() => { setLancamentoEd(null); setModalAberto(true); }} className="w-full py-3 rounded-xl text-sm font-semibold" style={{ background: "var(--primary)", color: "#fff" }}>+ Novo Lançamento</button>
+      <div className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+        {filtrados.map(l => <ItemLanc key={l.id} l={l} catMeta={catMeta} onEditar={abrirEditar} onDeletar={deletar} />)}
+      </div>
+      {modalAberto && <ModalLanc workspaceId={workspaceId!} contas={contas} cartoes={cartoes} categorias={categorias} lancamento={lancamentoEd} fechar={() => setModalAberto(false)} onSalvo={carregar} />}
+    </div>
+  );
 }
