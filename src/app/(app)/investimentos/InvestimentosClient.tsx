@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   Eye, EyeOff, Plus, Pencil, Trash2, X, TrendingUp,
-  ChevronDown, ChevronUp, Target,
+  ChevronDown, ChevronUp, Target, Settings2
 } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { createClient } from "@/lib/supabase/client";
@@ -11,12 +11,29 @@ import { useWorkspace } from "@/hooks/useWorkspace";
 import { brl } from "@/lib/utils";
 import type { Investimento, InvestMetas } from "@/types/database";
 
+// —— Interface Objetivos Dinâmicos ——
+export interface ObjetivoCustom {
+  id: string;
+  emoji: string;
+  nome: string;
+  meta: number;
+}
+
+const DEFAULT_OBJS: ObjetivoCustom[] = [
+  { id: "leilao", emoji: "🏠", nome: "Fundo leilão", meta: 100000 },
+  { id: "reserva", emoji: "🛡️", nome: "Reserva emergência", meta: 30000 },
+  { id: "aluguel27", emoji: "🏢", nome: "Aluguel 2027", meta: 37200 },
+  { id: "pgbl", emoji: "📊", nome: "PGBL", meta: 13000 },
+  { id: "consorcio", emoji: "🏡", nome: "Consórcio", meta: 200000 }
+];
+
 // —— InputValor: centavos automáticos (29550 → 295,50) ——
 function fmtCts(digits: string): string {
   const n = parseInt(digits || "0", 10);
   if (!digits) return "";
   return (n / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+
 function InputValor({ value, onChange, style, placeholder }: {
   value: string; onChange: (d: string) => void;
   style?: React.CSSProperties; placeholder?: string;
@@ -47,7 +64,6 @@ const CAT_INFO: Record<string, { label: string; cor: string }> = {
   objetivo: { label: "Objetivos", cor: "#b8456b" },
 };
 const CATS = Object.keys(CAT_INFO) as (keyof typeof CAT_INFO)[];
-
 const MOEDAS = ["BRL", "USD"] as const;
 
 function valorAtual(inv: Investimento, ptax: number): number {
@@ -57,74 +73,54 @@ function valorAtual(inv: Investimento, ptax: number): number {
   return inv.moeda === "USD" ? base * ptax : base;
 }
 
-// —— Modal de ativo (novo/editar) ——
 const inp = {
   background: "var(--surface2)", border: "1px solid var(--border)",
   color: "var(--text)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 14,
 };
 const lbl: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "var(--text-muted)" };
 
+// —— Modal de ativo (novo/editar) ——
 function ModalAtivo({
-  workspaceId, inv, ptax, fechar, onSalvo,
+  workspaceId, inv, ptax, objetivos, fechar, onSalvo,
 }: {
-  workspaceId: string;
-  inv?: Investimento | null;
-  ptax: number;
-  fechar: () => void;
-  onSalvo: () => void;
+  workspaceId: string; inv?: Investimento | null; ptax: number;
+  objetivos: ObjetivoCustom[]; fechar: () => void; onSalvo: () => void;
 }) {
   const [nome, setNome] = useState(inv?.nome || "");
   const [ticker, setTicker] = useState(inv?.ticker || "");
   const [categoria, setCategoria] = useState<string>(inv?.categoria || "rendaFixa");
+  const [obj, setObj] = useState(inv?.obj || "");
   const [cotas, setCotas] = useState(inv?.cotas != null ? String(inv.cotas) : "");
-  // Campos de preço em centavos (string de dígitos)
-  const [pm, setPm] = useState(
-    inv?.pm != null ? String(Math.round(Number(inv.pm) * 100)) : ""
-  );
-  const [precoAtual, setPrecoAtual] = useState(
-    inv?.preco_atual != null ? String(Math.round(Number(inv.preco_atual) * 100)) : ""
-  );
+  const [pm, setPm] = useState(inv?.pm != null ? String(Math.round(Number(inv.pm) * 100)) : "");
+  const [precoAtual, setPrecoAtual] = useState(inv?.preco_atual != null ? String(Math.round(Number(inv.preco_atual) * 100)) : "");
   const [moeda, setMoeda] = useState<"BRL" | "USD">(inv?.moeda || "BRL");
-  const [valorDir, setValorDir] = useState(
-    inv?.valor != null ? String(Math.round(Number(inv.valor) * 100)) : ""
-  );
+  const [valorDir, setValorDir] = useState(inv?.valor != null ? String(Math.round(Number(inv.valor) * 100)) : "");
   const [salvando, setSalvando] = useState(false);
 
   const pmNum = parseInt(pm || "0", 10) / 100;
   const precoNum = parseInt(precoAtual || "0", 10) / 100;
   const valorDirNum = parseInt(valorDir || "0", 10) / 100;
 
-  // Preview
   const usaCotas = !!cotas && !!precoAtual;
-  const totalBRL = usaCotas
-    ? Number(cotas) * precoNum * (moeda === "USD" ? ptax : 1)
-    : valorDirNum;
+  const totalBRL = usaCotas ? Number(cotas) * precoNum * (moeda === "USD" ? ptax : 1) : valorDirNum;
 
   async function salvar() {
     if (!nome) return;
     setSalvando(true);
     const payload = {
-      workspace_id: workspaceId,
-      nome,
-      ticker: ticker || null,
-      categoria,
-      cotas: cotas ? Number(cotas) : null,
-      pm: pmNum || null,
-      preco_atual: precoNum || null,
-      moeda,
-      valor: cotas ? null : (valorDirNum || null),
-      obj: null,
-      hidden: inv?.hidden ?? false,
+      workspace_id: workspaceId, nome, ticker: ticker || null, categoria,
+      cotas: cotas ? Number(cotas) : null, pm: pmNum || null, preco_atual: precoNum || null,
+      moeda, valor: cotas ? null : (valorDirNum || null),
+      obj: obj || null, hidden: inv?.hidden ?? false,
     } as Record<string, unknown>;
+    
     const supabase = createClient();
     if (inv?.id) {
       await supabase.from("investimentos").update(payload).eq("id", inv.id);
     } else {
       await supabase.from("investimentos").insert(payload);
     }
-    onSalvo();
-    fechar();
-    setSalvando(false);
+    onSalvo(); fechar(); setSalvando(false);
   }
 
   return (
@@ -134,82 +130,49 @@ function ModalAtivo({
         style={{ background: "var(--surface)", border: "1px solid var(--border)", maxHeight: "80vh" }}
         onClick={e => e.stopPropagation()}>
 
-        {/* Header fixo */}
-        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0"
-          style={{ borderColor: "var(--border)" }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: "var(--border)" }}>
           <h3 className="font-semibold">{inv ? "Editar ativo" : "Novo ativo"}</h3>
           <button onClick={fechar} style={{ color: "var(--text-muted)" }}><X size={20} /></button>
         </div>
 
-        {/* Campos roláveis */}
         <div className="overflow-y-auto p-4 flex flex-col gap-3" style={{ minHeight: 0, flex: "1 1 auto" }}>
-          <label style={lbl}>
-            Nome do ativo
-            <input type="text" value={nome} onChange={e => setNome(e.target.value)}
-              placeholder="Ex: Tesouro IPCA+ 2035" style={inp} autoFocus />
-          </label>
+          <label style={lbl}>Nome do ativo<input type="text" value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex: Tesouro IPCA+ 2035" style={inp} autoFocus /></label>
 
           <div className="grid grid-cols-2 gap-2">
-            <label style={lbl}>
-              Ticker (opcional)
-              <input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())}
-                placeholder="Ex: XPML11" style={inp} />
-            </label>
-            <label style={lbl}>
-              Moeda
-              <select value={moeda} onChange={e => setMoeda(e.target.value as "BRL" | "USD")} style={inp}>
-                {MOEDAS.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </label>
+            <label style={lbl}>Ticker (opcional)<input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} placeholder="Ex: XPML11" style={inp} /></label>
+            <label style={lbl}>Moeda<select value={moeda} onChange={e => setMoeda(e.target.value as "BRL" | "USD")} style={inp}>{MOEDAS.map(m => <option key={m} value={m}>{m}</option>)}</select></label>
           </div>
 
+          <label style={lbl}>Categoria<select value={categoria} onChange={e => setCategoria(e.target.value)} style={inp}>{CATS.map(c => <option key={c} value={c}>{CAT_INFO[c].label}</option>)}</select></label>
+          
           <label style={lbl}>
-            Categoria
-            <select value={categoria} onChange={e => setCategoria(e.target.value)} style={inp}>
-              {CATS.map(c => <option key={c} value={c}>{CAT_INFO[c].label}</option>)}
+            Vincular a um Objetivo
+            <select value={obj} onChange={e => setObj(e.target.value)} style={inp}>
+              <option value="">— Sem vínculo —</option>
+              {objetivos.map(o => <option key={o.id} value={o.id}>{o.emoji} {o.nome}</option>)}
             </select>
           </label>
 
           <div className="grid grid-cols-2 gap-2">
-            <label style={lbl}>
-              Qtd./Cotas
-              <input type="number" step="0.000001" value={cotas} onChange={e => setCotas(e.target.value)}
-                placeholder="0" style={inp} />
-            </label>
-            <label style={lbl}>
-              Preço atual ({moeda})
-              <InputValor value={precoAtual} onChange={setPrecoAtual} style={inp} placeholder="0,00" />
-            </label>
+            <label style={lbl}>Qtd./Cotas<input type="number" step="0.000001" value={cotas} onChange={e => setCotas(e.target.value)} placeholder="0" style={inp} /></label>
+            <label style={lbl}>Preço atual ({moeda})<InputValor value={precoAtual} onChange={setPrecoAtual} style={inp} placeholder="0,00" /></label>
           </div>
 
-          {cotas && (
-            <label style={lbl}>
-              Preço médio ({moeda})
-              <InputValor value={pm} onChange={setPm} style={inp} placeholder="0,00" />
-            </label>
-          )}
+          {cotas && <label style={lbl}>Preço médio ({moeda})<InputValor value={pm} onChange={setPm} style={inp} placeholder="0,00" /></label>}
 
           {!usaCotas && (
-            <label style={lbl}>
-              Valor total em BRL (alternativo)
-              <InputValor value={valorDir} onChange={setValorDir} style={inp} placeholder="0,00" />
-              <span className="text-xs" style={{ color: "var(--text-muted)" }}>Use quando não tem cotas (ex: CDB, poupança)</span>
-            </label>
+            <label style={lbl}>Valor total em BRL (alternativo)<InputValor value={valorDir} onChange={setValorDir} style={inp} placeholder="0,00" /><span className="text-xs" style={{ color: "var(--text-muted)" }}>Use quando não tem cotas (ex: CDB, poupança)</span></label>
           )}
 
           {(usaCotas || valorDirNum > 0) && (
             <div className="rounded-xl px-4 py-2.5" style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
-              <span className="text-xs" style={{ color: "var(--text-muted)" }}>Total estimado BRL: </span>
-              <span className="text-sm font-bold" style={{ color: "#4caf82" }}>{brl(totalBRL)}</span>
+              <span className="text-xs" style={{ color: "var(--text-muted)" }}>Total estimado BRL: </span><span className="text-sm font-bold" style={{ color: "#4caf82" }}>{brl(totalBRL)}</span>
             </div>
           )}
         </div>
 
-        {/* Botão fixo na base */}
         <div className="flex-shrink-0 px-4 pb-4 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
-          <button onClick={salvar} disabled={salvando || !nome}
-            className="w-full py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
-            style={{ background: "var(--primary)", color: "#fff" }}>
+          <button onClick={salvar} disabled={salvando || !nome} className="w-full py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: "var(--primary)", color: "#fff" }}>
             {salvando ? "Salvando…" : inv ? "Salvar alterações" : "Adicionar ativo"}
           </button>
         </div>
@@ -218,45 +181,73 @@ function ModalAtivo({
   );
 }
 
-// —— Edição inline de meta de objetivo ——
-function MetaInline({ metaKey, valorAtual, workspaceId, onSalvo }: {
-  metaKey: "reserva" | "leilao" | "aluguel27" | "pgbl";
-  valorAtual: number; workspaceId: string; onSalvo: () => void;
+// —— Modal Gerenciar Objetivos ——
+function ModalObjetivos({ workspaceId, objetivosAtuais, fechar, onSalvo }: {
+  workspaceId: string; objetivosAtuais: ObjetivoCustom[]; fechar: () => void; onSalvo: () => void;
 }) {
-  const [editando, setEditando] = useState(false);
-  const [cts, setCts] = useState(valorAtual ? String(Math.round(valorAtual * 100)) : "");
+  const [lista, setLista] = useState<ObjetivoCustom[]>(JSON.parse(JSON.stringify(objetivosAtuais)));
+  const [removidos, setRemovidos] = useState<string[]>([]);
   const [salvando, setSalvando] = useState(false);
+
+  function add() {
+    setLista([...lista, { id: `obj_${Date.now()}`, emoji: "🎯", nome: "Novo Objetivo", meta: 0 }]);
+  }
+
+  function remover(id: string) {
+    if (!confirm("Remover este objetivo? Os ativos vinculados a ele perderão o vínculo automaticamente.")) return;
+    setRemovidos(prev => [...prev, id]);
+    setLista(lista.filter(o => o.id !== id));
+  }
+
+  function update(id: string, campo: keyof ObjetivoCustom, valor: any) {
+    setLista(lista.map(o => o.id === id ? { ...o, [campo]: valor } : o));
+  }
 
   async function salvar() {
     setSalvando(true);
-    const novoValor = parseInt(cts || "0", 10) / 100;
-    await createClient().from("invest_metas")
-      .update({ [metaKey]: novoValor } as Record<string, unknown>)
-      .eq("workspace_id", workspaceId);
-    setEditando(false);
-    setSalvando(false);
-    onSalvo();
+    const supabase = createClient();
+    await supabase.from("invest_metas").update({ objetivos_custom: lista } as any).eq("workspace_id", workspaceId);
+
+    if (removidos.length > 0) {
+      await supabase.from("investimentos").update({ obj: null } as any).in("obj", removidos).eq("workspace_id", workspaceId);
+    }
+    onSalvo(); fechar(); setSalvando(false);
   }
 
-  if (editando) {
-    return (
-      <input
-        autoFocus type="text" inputMode="numeric"
-        value={fmtCts(cts)}
-        onChange={e => setCts(e.target.value.replace(/\D/g, "").slice(0, 12))}
-        onBlur={salvar}
-        onKeyDown={e => { if (e.key === "Enter") salvar(); }}
-        disabled={salvando}
-        className="text-xs rounded px-1.5 py-0.5 w-24 outline-none text-right"
-        style={{ background: "var(--surface)", border: "1px solid var(--primary)", color: "var(--text)" }}
-      />
-    );
-  }
   return (
-    <button onClick={() => { setCts(valorAtual ? String(Math.round(valorAtual * 100)) : ""); setEditando(true); }}
-      style={{ color: valorAtual > 0 ? "var(--text)" : "var(--primary)", fontWeight: 600 }}>
-      {valorAtual > 0 ? brl(valorAtual) : "definir meta"}
-    </button>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center pb-12 sm:pb-0" style={{ background: "rgba(0,0,0,0.6)" }} onClick={fechar}>
+      <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col max-h-[80vh]"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)" }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: "var(--border)" }}>
+          <h3 className="font-semibold">Gerenciar Objetivos</h3>
+          <button onClick={fechar} style={{ color: "var(--text-muted)" }}><X size={20} /></button>
+        </div>
+        <div className="overflow-y-auto p-4 flex flex-col gap-3">
+          <p className="text-xs mb-1" style={{ color: "var(--text-muted)" }}>Defina suas metas. Excluir um objetivo não apaga seus investimentos, apenas remove o vínculo.</p>
+          {lista.map(o => (
+            <div key={o.id} className="flex gap-2 items-center p-2 rounded-xl" style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
+              <input value={o.emoji} onChange={e => update(o.id, 'emoji', e.target.value)} className="w-10 h-10 text-center rounded-lg text-lg outline-none" style={{ background: "var(--surface)", border: "1px solid var(--border)" }} />
+              <div className="flex-1 flex flex-col gap-1">
+                <input value={o.nome} onChange={e => update(o.id, 'nome', e.target.value)} placeholder="Nome do objetivo" className="text-sm px-2 py-1 rounded outline-none" style={{ background: "transparent", color: "var(--text)", fontWeight: 500 }} />
+                <div className="flex items-center gap-1 px-2">
+                  <span className="text-xs" style={{ color: "var(--text-muted)" }}>Meta R$</span>
+                  <InputValor value={String(Math.round(o.meta * 100))} onChange={v => update(o.id, 'meta', parseInt(v || "0", 10) / 100)} style={{ background: "transparent", fontSize: 13, color: "var(--primary)", fontWeight: 600, width: "100%", outline: "none" }} />
+                </div>
+              </div>
+              <button onClick={() => remover(o.id)} className="p-2 transition-colors" style={{ color: "var(--danger)" }}><Trash2 size={16} /></button>
+            </div>
+          ))}
+          <button onClick={add} className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium mt-1" style={{ border: "1px dashed var(--border)", color: "var(--text-muted)" }}>
+            <Plus size={16} /> Adicionar objetivo
+          </button>
+        </div>
+        <div className="p-4 border-t flex-shrink-0" style={{ borderColor: "var(--border)" }}>
+          <button onClick={salvar} disabled={salvando} className="w-full py-2.5 rounded-xl text-sm font-semibold" style={{ background: "var(--primary)", color: "#fff" }}>
+            {salvando ? "Salvando..." : "Salvar alterações"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -270,30 +261,17 @@ function PtaxInline({ valorAtual, workspaceId, onSalvo }: {
 
   async function salvar() {
     setSalvando(true);
-    await createClient().from("invest_metas")
-      .update({ ptax: Number(val) || valorAtual } as Record<string, unknown>)
-      .eq("workspace_id", workspaceId);
-    setEditando(false);
-    setSalvando(false);
-    onSalvo();
+    await createClient().from("invest_metas").update({ ptax: Number(val) || valorAtual } as Record<string, unknown>).eq("workspace_id", workspaceId);
+    setEditando(false); setSalvando(false); onSalvo();
   }
 
   if (editando) {
     return (
-      <input
-        autoFocus type="number" step="0.0001" value={val}
-        onChange={e => setVal(e.target.value)}
-        onBlur={salvar}
-        onKeyDown={e => { if (e.key === "Enter") salvar(); }}
-        disabled={salvando}
-        className="text-sm rounded px-1.5 py-0.5 w-24 outline-none text-right"
-        style={{ background: "var(--surface)", border: "1px solid var(--primary)", color: "var(--text)" }}
-      />
+      <input autoFocus type="number" step="0.0001" value={val} onChange={e => setVal(e.target.value)} onBlur={salvar} onKeyDown={e => { if (e.key === "Enter") salvar(); }} disabled={salvando} className="text-sm rounded px-1.5 py-0.5 w-24 outline-none text-right" style={{ background: "var(--surface)", border: "1px solid var(--primary)", color: "var(--text)" }} />
     );
   }
   return (
-    <button onClick={() => { setVal(String(valorAtual)); setEditando(true); }}
-      className="text-sm font-semibold" style={{ color: "var(--primary)" }}>
+    <button onClick={() => { setVal(String(valorAtual)); setEditando(true); }} className="text-sm font-semibold" style={{ color: "var(--primary)" }}>
       R$ {valorAtual.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}
     </button>
   );
@@ -308,11 +286,13 @@ export default function InvestimentosClient() {
 
   // UI
   const [modalAberto, setModalAberto] = useState(false);
+  const [modalObjAberto, setModalObjAberto] = useState(false);
   const [editando, setEditando] = useState<Investimento | null>(null);
   const [catAberta, setCatAberta] = useState<Record<string, boolean>>({});
   const [mostrarOcultos, setMostrarOcultos] = useState(false);
 
   const ptax = metas?.ptax || 5.0;
+  const objetivosCustom: ObjetivoCustom[] = (metas?.objetivos_custom as unknown as ObjetivoCustom[]) || DEFAULT_OBJS;
 
   const carregar = useCallback(async () => {
     if (!workspaceId) return;
@@ -329,19 +309,11 @@ export default function InvestimentosClient() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  // —— Toggle hidden no Supabase ——
   async function toggleHidden(inv: Investimento) {
     const novoValor = !inv.hidden;
-    // Atualiza otimisticamente
     setItens(prev => prev.map(i => i.id === inv.id ? { ...i, hidden: novoValor } : i));
-    const { error } = await createClient()
-      .from("investimentos")
-      .update({ hidden: novoValor } as Record<string, unknown>)
-      .eq("id", inv.id);
-    if (error) {
-      // Reverte se erro
-      setItens(prev => prev.map(i => i.id === inv.id ? { ...i, hidden: !novoValor } : i));
-    }
+    const { error } = await createClient().from("investimentos").update({ hidden: novoValor } as Record<string, unknown>).eq("id", inv.id);
+    if (error) setItens(prev => prev.map(i => i.id === inv.id ? { ...i, hidden: !novoValor } : i));
   }
 
   async function deletar(id: string) {
@@ -354,28 +326,18 @@ export default function InvestimentosClient() {
   function abrirEditar(inv: Investimento) { setEditando(inv); setModalAberto(true); }
   function toggleCat(cat: string) { setCatAberta(prev => ({ ...prev, [cat]: !prev[cat] })); }
 
-  // —— Cálculos ——
-  // Itens visíveis (não ocultos) = usados no total e no gráfico
   const visiveis = itens.filter(i => !i.hidden);
   const ocultos = itens.filter(i => i.hidden);
   const totalGeral = visiveis.reduce((s, i) => s + valorAtual(i, ptax), 0);
 
-  // Pizza por categoria (apenas visíveis)
-  const pizzaData = CATS
-    .map(cat => ({
-      cat,
-      label: CAT_INFO[cat].label,
-      cor: CAT_INFO[cat].cor,
-      value: visiveis.filter(i => i.categoria === cat).reduce((s, i) => s + valorAtual(i, ptax), 0),
-    }))
-    .filter(d => d.value > 0);
+  const pizzaData = CATS.map(cat => ({
+    cat, label: CAT_INFO[cat].label, cor: CAT_INFO[cat].cor,
+    value: visiveis.filter(i => i.categoria === cat).reduce((s, i) => s + valorAtual(i, ptax), 0),
+  })).filter(d => d.value > 0);
 
-  // Itens por categoria (todos — visíveis + ocultos)
   const itensPorCat = (cat: string) => itens.filter(i => i.categoria === cat);
 
-  if (wsLoading || carregando) {
-    return <div className="flex items-center justify-center h-40" style={{ color: "var(--text-muted)" }}>Carregando…</div>;
-  }
+  if (wsLoading || carregando) return <div className="flex items-center justify-center h-40" style={{ color: "var(--text-muted)" }}>Carregando…</div>;
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-4 flex flex-col gap-4">
@@ -385,30 +347,18 @@ export default function InvestimentosClient() {
         <p className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>Patrimônio total</p>
         <p className="text-3xl font-bold mt-0.5" style={{ color: "#4caf82" }}>{brl(totalGeral)}</p>
         {ocultos.length > 0 && (
-          <button
-            onClick={() => setMostrarOcultos(v => !v)}
-            className="text-xs mt-2 flex items-center gap-1"
-            style={{ color: "var(--text-muted)" }}>
+          <button onClick={() => setMostrarOcultos(v => !v)} className="text-xs mt-2 flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
             <EyeOff size={12} />
-            {ocultos.length} ativo{ocultos.length !== 1 ? "s" : ""} oculto{ocultos.length !== 1 ? "s" : ""} (
-            {brl(ocultos.reduce((s, i) => s + valorAtual(i, ptax), 0))} excluído do total)
+            {ocultos.length} ativo{ocultos.length !== 1 ? "s" : ""} oculto{ocultos.length !== 1 ? "s" : ""} ({brl(ocultos.reduce((s, i) => s + valorAtual(i, ptax), 0))} excluído)
             {" · "}<span style={{ color: "var(--primary)" }}>{mostrarOcultos ? "Ocultar" : "Mostrar"}</span>
           </button>
         )}
         {mostrarOcultos && ocultos.length > 0 && (
-          <button
-            onClick={async () => {
-              // Mostrar todos = setar hidden=false em todos
-              const ids = ocultos.map(i => i.id);
-              setItens(prev => prev.map(i => ids.includes(i.id) ? { ...i, hidden: false } : i));
-              await createClient().from("investimentos")
-                .update({ hidden: false } as Record<string, unknown>)
-                .in("id", ids);
-            }}
-            className="text-xs mt-1 underline"
-            style={{ color: "var(--primary)" }}>
-            Mostrar todos no total
-          </button>
+          <button onClick={async () => {
+            const ids = ocultos.map(i => i.id);
+            setItens(prev => prev.map(i => ids.includes(i.id) ? { ...i, hidden: false } : i));
+            await createClient().from("investimentos").update({ hidden: false } as Record<string, unknown>).in("id", ids);
+          }} className="text-xs mt-1 underline" style={{ color: "var(--primary)" }}>Mostrar todos no total</button>
         )}
       </div>
 
@@ -416,14 +366,11 @@ export default function InvestimentosClient() {
       {pizzaData.length > 0 && (
         <div className="rounded-xl px-4 py-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <p className="text-sm font-semibold mb-2">Alocação</p>
-          {/* flex com chart fixo à esquerda e legenda à direita com overflow controlado */}
           <div style={{ display: "flex", gap: 12, alignItems: "center", overflow: "hidden" }}>
             <div style={{ width: 110, height: 110, flexShrink: 0 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={pizzaData} cx="50%" cy="50%" outerRadius={50} dataKey="value" nameKey="label">
-                    {pizzaData.map((d, i) => <Cell key={i} fill={d.cor} />)}
-                  </Pie>
+                  <Pie data={pizzaData} cx="50%" cy="50%" outerRadius={50} dataKey="value" nameKey="label">{pizzaData.map((d, i) => <Cell key={i} fill={d.cor} />)}</Pie>
                   <Tooltip formatter={(v) => brl(Number(v))} />
                 </PieChart>
               </ResponsiveContainer>
@@ -432,15 +379,9 @@ export default function InvestimentosClient() {
               {pizzaData.map(d => (
                 <div key={d.cat} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
                   <span style={{ width: 8, height: 8, borderRadius: "50%", background: d.cor, flexShrink: 0 }} />
-                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-muted)" }}>
-                    {d.label}
-                  </span>
-                  <span style={{ flexShrink: 0, fontWeight: 600 }}>
-                    {totalGeral ? ((d.value / totalGeral) * 100).toFixed(0) : 0}%
-                  </span>
-                  <span style={{ flexShrink: 0, color: "var(--text-muted)", fontSize: 10 }}>
-                    {brl(d.value)}
-                  </span>
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-muted)" }}>{d.label}</span>
+                  <span style={{ flexShrink: 0, fontWeight: 600 }}>{totalGeral ? ((d.value / totalGeral) * 100).toFixed(0) : 0}%</span>
+                  <span style={{ flexShrink: 0, color: "var(--text-muted)", fontSize: 10 }}>{brl(d.value)}</span>
                 </div>
               ))}
             </div>
@@ -448,10 +389,7 @@ export default function InvestimentosClient() {
         </div>
       )}
 
-      {/* Botão novo ativo */}
-      <button onClick={abrirNovo}
-        className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
-        style={{ background: "var(--primary)", color: "#fff" }}>
+      <button onClick={abrirNovo} className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium" style={{ background: "var(--primary)", color: "#fff" }}>
         <Plus size={16} /> Novo ativo
       </button>
 
@@ -461,76 +399,43 @@ export default function InvestimentosClient() {
         if (grupo.length === 0) return null;
         const totalCat = grupo.filter(i => !i.hidden).reduce((s, i) => s + valorAtual(i, ptax), 0);
         const info = CAT_INFO[cat];
-        const aberta = catAberta[cat] !== false; // default: expandido
+        const aberta = catAberta[cat] !== false;
 
         return (
-          <div key={cat} className="rounded-xl overflow-hidden"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-            {/* Header da categoria */}
+          <div key={cat} className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
             <button className="w-full flex items-center gap-2 px-4 py-3" onClick={() => toggleCat(cat)}>
               <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: info.cor }} />
               <p className="text-sm font-semibold flex-1 text-left">{info.label}</p>
-              <span className="text-xs flex-shrink-0 mr-1" style={{ color: "var(--text-muted)" }}>
-                {grupo.length} ativo{grupo.length !== 1 ? "s" : ""}
-              </span>
-              <span className="text-sm font-bold flex-shrink-0 mr-1" style={{ color: "#4caf82" }}>
-                {brl(totalCat)}
-              </span>
-              {aberta
-                ? <ChevronUp size={15} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-                : <ChevronDown size={15} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-              }
+              <span className="text-xs flex-shrink-0 mr-1" style={{ color: "var(--text-muted)" }}>{grupo.length} ativo{grupo.length !== 1 ? "s" : ""}</span>
+              <span className="text-sm font-bold flex-shrink-0 mr-1" style={{ color: "#4caf82" }}>{brl(totalCat)}</span>
+              {aberta ? <ChevronUp size={15} style={{ color: "var(--text-muted)", flexShrink: 0 }} /> : <ChevronDown size={15} style={{ color: "var(--text-muted)", flexShrink: 0 }} />}
             </button>
 
-            {/* Itens */}
             {aberta && (
               <div className="border-t" style={{ borderColor: "var(--border)" }}>
                 {grupo.map(inv => {
                   const val = valorAtual(inv, ptax);
                   const oculto = inv.hidden;
+                  const vinculadoObj = objetivosCustom.find(o => o.id === inv.obj);
                   return (
-                    <div key={inv.id}
-                      className="flex items-center gap-3 px-4 py-2.5 border-b last:border-0"
-                      style={{
-                        borderColor: "var(--border)",
-                        opacity: oculto ? 0.45 : 1,
-                        transition: "opacity 0.15s",
-                      }}>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          {oculto && <EyeOff size={11} style={{ color: "var(--text-muted)", flexShrink: 0 }} />}
-                          <p className="text-sm truncate font-medium">{inv.nome}</p>
-                          {inv.ticker && (
-                            <span className="text-xs px-1.5 py-0.5 rounded flex-shrink-0"
-                              style={{ background: "var(--surface2)", color: "var(--text-muted)" }}>
-                              {inv.ticker}
-                            </span>
-                          )}
+                    <div key={inv.id} className="flex flex-col gap-1 px-4 py-2.5 border-b last:border-0" style={{ borderColor: "var(--border)", opacity: oculto ? 0.45 : 1, transition: "opacity 0.15s" }}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            {oculto && <EyeOff size={11} style={{ color: "var(--text-muted)", flexShrink: 0 }} />}
+                            <p className="text-sm truncate font-medium">{inv.nome}</p>
+                            {inv.ticker && <span className="text-xs px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: "var(--surface2)", color: "var(--text-muted)" }}>{inv.ticker}</span>}
+                          </div>
+                          {inv.cotas && <p className="text-xs" style={{ color: "var(--text-muted)" }}>{inv.cotas} cotas · PM {inv.pm ? brl(inv.pm) : "—"}{inv.moeda === "USD" ? " (USD)" : ""}</p>}
+                          {vinculadoObj && <p className="text-[10px] mt-0.5" style={{ color: "var(--primary-light)" }}>↳ {vinculadoObj.emoji} {vinculadoObj.nome}</p>}
                         </div>
-                        {inv.cotas && (
-                          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                            {inv.cotas} cotas · PM {inv.pm ? brl(inv.pm) : "—"}
-                            {inv.moeda === "USD" ? " (USD)" : ""}
-                          </p>
-                        )}
-                      </div>
-                      <span className="text-sm font-bold flex-shrink-0 mr-1" style={{ color: "#4caf82" }}>
-                        {brl(val)}
-                      </span>
-                      {/* Controles */}
-                      <div className="flex gap-1.5 flex-shrink-0">
-                        <button
-                          onClick={() => toggleHidden(inv)}
-                          title={oculto ? "Incluir no total" : "Excluir do total"}
-                          style={{ color: oculto ? "var(--primary)" : "var(--text-muted)" }}>
-                          {oculto ? <Eye size={14} /> : <EyeOff size={14} />}
-                        </button>
-                        <button onClick={() => abrirEditar(inv)} style={{ color: "var(--text-muted)" }}>
-                          <Pencil size={13} />
-                        </button>
-                        <button onClick={() => deletar(inv.id)} style={{ color: "var(--text-muted)" }}>
-                          <Trash2 size={13} />
-                        </button>
+                        <span className="text-sm font-bold flex-shrink-0 mr-3" style={{ color: "#4caf82" }}>{brl(val)}</span>
+                        
+                        <div className="flex gap-1.5 flex-shrink-0">
+                          <button onClick={() => toggleHidden(inv)} title={oculto ? "Incluir no total" : "Excluir do total"} style={{ color: oculto ? "var(--primary)" : "var(--text-muted)" }}>{oculto ? <Eye size={14} /> : <EyeOff size={14} />}</button>
+                          <button onClick={() => abrirEditar(inv)} style={{ color: "var(--text-muted)" }}><Pencil size={13} /></button>
+                          <button onClick={() => deletar(inv.id)} style={{ color: "var(--text-muted)" }}><Trash2 size={13} /></button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -541,48 +446,38 @@ export default function InvestimentosClient() {
         );
       })}
 
-      {/* Objetivos — editáveis */}
+      {/* Objetivos — dinâmicos */}
       {metas && (
         <div className="rounded-xl px-4 py-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <div className="flex items-center gap-2 mb-3">
-            <Target size={14} style={{ color: "var(--primary)" }} />
-            <p className="text-sm font-semibold flex-1">Objetivos</p>
-            <span className="text-xs" style={{ color: "var(--text-muted)" }}>toque na meta para editar</span>
+            <Target size={15} style={{ color: "var(--primary)" }} />
+            <p className="text-sm font-semibold flex-1">Objetivos e Metas</p>
+            <button onClick={() => setModalObjAberto(true)} className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg transition-colors" style={{ background: "var(--surface2)", color: "var(--text)" }}>
+              <Settings2 size={12} /> Gerenciar
+            </button>
           </div>
+          
           <div className="flex flex-col gap-3">
-            {([
-              { key: "reserva" as const, label: "Reserva de emergência", filtro: (i: Investimento) => i.obj === "reserva" },
-              { key: "leilao" as const, label: "Fundo de leilão", filtro: (i: Investimento) => i.obj === "leilao" },
-              { key: "aluguel27" as const, label: "Aluguel 2027", filtro: (i: Investimento) => i.obj === "aluguel27" },
-              { key: "pgbl" as const, label: "PGBL", filtro: (i: Investimento) => i.categoria === "pgbl" },
-            ]).map(obj => {
-              const meta = Number(metas[obj.key]) || 0;
-              const atual = visiveis.filter(obj.filtro).reduce((s, i) => s + valorAtual(i, ptax), 0);
+            {objetivosCustom.map(obj => {
+              const meta = Number(obj.meta) || 0;
+              // Mantemos retrocompatibilidade com a categoria "pgbl" antiga apenas para fallback
+              const atual = visiveis.filter(i => i.obj === obj.id || (obj.id === 'pgbl' && i.categoria === 'pgbl')).reduce((s, i) => s + valorAtual(i, ptax), 0);
               const pct = meta > 0 ? Math.min((atual / meta) * 100, 100) : 0;
               return (
-                <div key={obj.key}>
+                <div key={obj.id}>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs" style={{ color: "var(--text-muted)" }}>{obj.label}</span>
-                    <span className="text-xs font-medium">
-                      {brl(atual)} / <MetaInline metaKey={obj.key} valorAtual={meta}
-                        workspaceId={workspaceId!} onSalvo={carregar} />
-                    </span>
+                    <span className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>{obj.emoji} {obj.nome}</span>
+                    <span className="text-xs font-medium">{brl(atual)} / <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>{meta > 0 ? brl(meta) : "S/ Meta"}</span></span>
                   </div>
                   <div className="h-1.5 rounded-full" style={{ background: "var(--surface2)" }}>
-                    <div className="h-1.5 rounded-full transition-all"
-                      style={{ width: `${pct}%`, background: pct >= 100 ? "#4caf82" : "var(--primary)" }} />
+                    <div className="h-1.5 rounded-full transition-all" style={{ width: `${pct}%`, background: pct >= 100 ? "#4caf82" : "var(--primary)" }} />
                   </div>
-                  {meta > 0 && (
-                    <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
-                      {pct.toFixed(0)}% atingido
-                    </p>
-                  )}
+                  {meta > 0 && <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>{pct.toFixed(0)}% atingido</p>}
                 </div>
               );
             })}
           </div>
 
-          {/* PTAX editável */}
           <div className="flex items-center justify-between mt-3 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>Cotação USD (PTAX)</span>
             <PtaxInline valorAtual={ptax} workspaceId={workspaceId!} onSalvo={carregar} />
@@ -590,16 +485,9 @@ export default function InvestimentosClient() {
         </div>
       )}
 
-      {/* Modal */}
-      {modalAberto && (
-        <ModalAtivo
-          workspaceId={workspaceId!}
-          inv={editando}
-          ptax={ptax}
-          fechar={() => setModalAberto(false)}
-          onSalvo={carregar}
-        />
-      )}
+      {/* Modais */}
+      {modalAberto && <ModalAtivo workspaceId={workspaceId!} inv={editando} ptax={ptax} objetivos={objetivosCustom} fechar={() => setModalAberto(false)} onSalvo={carregar} />}
+      {modalObjAberto && <ModalObjetivos workspaceId={workspaceId!} objetivosAtuais={objetivosCustom} fechar={() => setModalObjAberto(false)} onSalvo={carregar} />}
     </div>
   );
 }
