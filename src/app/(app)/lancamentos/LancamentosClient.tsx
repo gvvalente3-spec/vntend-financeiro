@@ -31,6 +31,32 @@ function matchSearch(l: Lancamento, ql: string): boolean {
   return false;
 }
 
+// —— InputValor: centavos automáticos (29550 → 295,50) ——
+function fmtCts(digits: string): string {
+  const n = parseInt(digits || "0", 10);
+  if (!digits) return "";
+  return (n / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function InputValor({ value, onChange, style, placeholder, autoFocus }: {
+  value: string; onChange: (d: string) => void;
+  style?: React.CSSProperties; placeholder?: string; autoFocus?: boolean;
+}) {
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      autoFocus={autoFocus}
+      value={fmtCts(value)}
+      onChange={e => {
+        const d = e.target.value.replace(/\D/g, "").slice(0, 12);
+        onChange(d);
+      }}
+      placeholder={placeholder ?? "0,00"}
+      style={style}
+    />
+  );
+}
+
 // —— Campo de busca reutilizável ——
 function CampoBusca({
   value, onChange, placeholder,
@@ -110,7 +136,10 @@ function ModalLanc({
   onSalvo: () => void;
 }) {
   const [tipo, setTipo] = useState<"receita" | "despesa">(lancamento?.tipo || "despesa");
-  const [valor, setValor] = useState(lancamento ? String(lancamento.valor) : "");
+  // Valor armazenado em centavos (string de dígitos): "29550" = R$ 295,50
+  const [valorCts, setValorCts] = useState(
+    lancamento ? String(Math.round(Number(lancamento.valor) * 100)) : ""
+  );
   const [descricao, setDescricao] = useState(lancamento?.descricao || "");
   const [data, setData] = useState(lancamento?.data || new Date().toISOString().slice(0, 10));
   const [cat, setCat] = useState(lancamento?.cat || "");
@@ -120,14 +149,16 @@ function ModalLanc({
   const [pago, setPago] = useState(lancamento?.pago ?? true);
   const [salvando, setSalvando] = useState(false);
 
+  const valorNum = parseInt(valorCts || "0", 10) / 100;
+
   async function salvar() {
-    if (!valor || !data) return;
+    if (!valorCts || !data) return;
     setSalvando(true);
     const supabase = createClient();
     const payload = {
       workspace_id: workspaceId,
       tipo,
-      valor: Number(valor),
+      valor: valorNum,
       descricao: descricao || null,
       data,
       cat: cat || null,
@@ -155,16 +186,19 @@ function ModalLanc({
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
       style={{ background: "rgba(0,0,0,0.5)" }} onClick={fechar}>
-      <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col max-h-[90vh]"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+      <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", maxHeight: "92vh" }}
         onClick={e => e.stopPropagation()}>
+
+        {/* Header fixo */}
         <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0"
           style={{ borderColor: "var(--border)" }}>
           <h3 className="font-semibold">{lancamento ? "Editar lançamento" : "Novo lançamento"}</h3>
           <button onClick={fechar} style={{ color: "var(--text-muted)" }}><X size={20} /></button>
         </div>
+
+        {/* Campos roláveis */}
         <div className="overflow-y-auto flex-1 p-4 flex flex-col gap-3">
-          {/* Tipo */}
           <div className="grid grid-cols-2 gap-2">
             {(["receita", "despesa"] as const).map(t => (
               <button key={t} onClick={() => setTipo(t)}
@@ -181,8 +215,7 @@ function ModalLanc({
 
           <label style={lbl}>
             Valor (R$)
-            <input type="number" step="0.01" value={valor} onChange={e => setValor(e.target.value)}
-              placeholder="0,00" style={inp} autoFocus />
+            <InputValor value={valorCts} onChange={setValorCts} style={inp} autoFocus />
           </label>
 
           <label style={lbl}>
@@ -240,9 +273,12 @@ function ModalLanc({
               Pago / já debitado
             </button>
           )}
+        </div>
 
-          <button onClick={salvar} disabled={salvando || !valor || !data}
-            className="py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
+        {/* Botão fixo na base — sempre visível */}
+        <div className="flex-shrink-0 px-4 pb-4 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
+          <button onClick={salvar} disabled={salvando || !valorCts || !data}
+            className="w-full py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
             style={{ background: "var(--primary)", color: "#fff" }}>
             {salvando ? "Salvando…" : lancamento ? "Salvar alterações" : "Registrar"}
           </button>
