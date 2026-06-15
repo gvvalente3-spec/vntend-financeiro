@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import {
-  Eye, EyeOff, Plus, Pencil, Trash2, X, TrendingUp,
+  Eye, EyeOff, Plus, Pencil, Trash2, X,
   ChevronDown, ChevronUp, Target,
 } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
