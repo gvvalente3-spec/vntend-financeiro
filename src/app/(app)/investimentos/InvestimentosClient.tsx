@@ -11,24 +11,6 @@ import { useWorkspace } from "@/hooks/useWorkspace";
 import { brl } from "@/lib/utils";
 import type { Investimento, InvestMetas } from "@/types/database";
 
-// —— APIs ——
-async function fetchCotacao(ticker: string): Promise<number | null> {
-  try {
-    const upper = ticker.toUpperCase().replace(".SA", "");
-    const res = await fetch(`https://brapi.dev/api/quote/${upper}?token=anonymous`, { signal: AbortSignal.timeout(5000) });
-    const data = await res.json();
-    return data?.results?.[0]?.regularMarketPrice || null;
-  } catch { return null; }
-}
-
-async function fetchDolar(): Promise<number | null> {
-  try {
-    const res = await fetch(`https://economia.awesomeapi.com.br/json/last/USD-BRL`, { signal: AbortSignal.timeout(5000) });
-    const data = await res.json();
-    return parseFloat(data.USDBRL.bid);
-  } catch { return null; }
-}
-
 // —— Interface Objetivos Dinâmicos ——
 export interface ObjetivoCustom {
   id: string;
@@ -326,24 +308,11 @@ function PtaxInline({ valorAtual, workspaceId, onSalvo }: {
   const [editando, setEditando] = useState(false);
   const [val, setVal] = useState(String(valorAtual));
   const [salvando, setSalvando] = useState(false);
-  const [buscando, setBuscando] = useState(false);
 
   async function salvarManual() {
     setSalvando(true);
     await createClient().from("invest_metas").update({ ptax: Number(val) || valorAtual } as Record<string, unknown>).eq("workspace_id", workspaceId);
     setEditando(false); setSalvando(false); onSalvo();
-  }
-
-  async function atualizarDolarOnline() {
-    setBuscando(true);
-    const cotacao = await fetchDolar();
-    if (cotacao) {
-      await createClient().from("invest_metas").update({ ptax: cotacao } as Record<string, unknown>).eq("workspace_id", workspaceId);
-      onSalvo();
-    } else {
-      alert("Não foi possível obter a cotação do Dólar no momento.");
-    }
-    setBuscando(false);
   }
 
   if (editando) {
@@ -352,14 +321,9 @@ function PtaxInline({ valorAtual, workspaceId, onSalvo }: {
     );
   }
   return (
-    <div className="flex items-center gap-2">
-      <button onClick={atualizarDolarOnline} disabled={buscando} title="Atualizar cotação via AwesomeAPI" className="transition-colors hover:opacity-80" style={{ color: "var(--text-muted)" }}>
-        <RefreshCw size={13} className={buscando ? "animate-spin" : ""} />
-      </button>
-      <button onClick={() => { setVal(String(valorAtual)); setEditando(true); }} className="text-sm font-semibold" style={{ color: "var(--primary)" }}>
-        R$ {valorAtual.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}
-      </button>
-    </div>
+    <button onClick={() => { setVal(String(valorAtual)); setEditando(true); }} className="text-sm font-semibold" style={{ color: "var(--primary)" }}>
+      R$ {valorAtual.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}
+    </button>
   );
 }
 
@@ -375,9 +339,9 @@ export default function InvestimentosClient() {
   const [modalObjAberto, setModalObjAberto] = useState(false);
   const [editando, setEditando] = useState<Investimento | null>(null);
   const [aportando, setAportando] = useState<Investimento | null>(null);
-  const [buscandoTicker, setBuscandoTicker] = useState<Record<string, boolean>>({});
   const [catAberta, setCatAberta] = useState<Record<string, boolean>>({});
   const [mostrarOcultos, setMostrarOcultos] = useState(false);
+  const [atualizandoCotacoes, setAtualizandoCotacoes] = useState(false);
 
   const ptax = metas?.ptax || 5.0;
   const objetivosCustom: ObjetivoCustom[] = (metas?.objetivos_custom as unknown as ObjetivoCustom[]) || DEFAULT_OBJS;
@@ -397,16 +361,59 @@ export default function InvestimentosClient() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  async function atualizarTicker(id: string, ticker: string) {
-    setBuscandoTicker(prev => ({ ...prev, [id]: true }));
-    const preco = await fetchCotacao(ticker);
-    if (preco) {
-      await createClient().from("investimentos").update({ preco_atual: preco } as Record<string, unknown>).eq("id", id);
-      setItens(prev => prev.map(x => x.id === id ? { ...x, preco_atual: preco } : x));
-    } else {
-      alert(`Falha ao buscar cotação de ${ticker}.`);
+  // Função Global de Atualização de Cotações via API Interna
+  async function atualizarTodasCotacoes() {
+    if (!workspaceId) return;
+    setAtualizandoCotacoes(true);
+    try {
+      const ativosComTicker = itens.filter(i => i.ticker);
+      const payload = ativosComTicker.map(i => ({
+        id: i.id,
+        ticker: i.ticker,
+        tipo: i.categoria === "cripto" ? "cripto" : i.categoria === "exterior" ? "ext" : "br"
+      }));
+
+      // Chama a rota interna /api/cotacoes
+      const res = await fetch("/api/cotacoes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tickers: payload })
+      });
+
+      if (!res.ok) throw new Error("Erro na resposta da API");
+      const data = await res.json();
+
+      const supabase = createClient();
+      let houveAtualizacao = false;
+
+      // 1. Atualizar o PTAX (Dólar) se encontrou valor
+      if (data.ptax && data.ptax > 0) {
+        await supabase.from("invest_metas").update({ ptax: data.ptax } as any).eq("workspace_id", workspaceId);
+        houveAtualizacao = true;
+      }
+
+      // 2. Atualizar todos os ativos que retornaram preço
+      if (data.resultados && data.resultados.length > 0) {
+        for (const ativo of data.resultados) {
+          if (ativo.preco && ativo.preco > 0) {
+            await supabase.from("investimentos").update({ preco_atual: ativo.preco } as any).eq("id", ativo.id);
+            houveAtualizacao = true;
+          }
+        }
+      }
+
+      if (houveAtualizacao) {
+        await carregar(); // Recarrega os dados visuais na tela
+        alert("Cotações e Dólar atualizados com sucesso!");
+      } else {
+        alert("Nenhuma cotação nova encontrada no momento.");
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Erro ao tentar atualizar as cotações. Tente novamente mais tarde.");
+    } finally {
+      setAtualizandoCotacoes(false);
     }
-    setBuscandoTicker(prev => ({ ...prev, [id]: false }));
   }
 
   async function toggleHidden(inv: Investimento) {
@@ -489,9 +496,20 @@ export default function InvestimentosClient() {
         </div>
       )}
 
-      <button onClick={abrirNovo} className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium" style={{ background: "var(--primary)", color: "#fff" }}>
-        <Plus size={16} /> Novo ativo
-      </button>
+      {/* Botões de Ação Principais */}
+      <div className="grid grid-cols-2 gap-2">
+        <button onClick={abrirNovo} className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium" style={{ background: "var(--primary)", color: "#fff" }}>
+          <Plus size={16} /> Novo ativo
+        </button>
+        <button 
+          onClick={atualizarTodasCotacoes} 
+          disabled={atualizandoCotacoes}
+          className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium disabled:opacity-50 transition-colors" 
+          style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)" }}>
+          <RefreshCw size={16} className={atualizandoCotacoes ? "animate-spin" : ""} />
+          {atualizandoCotacoes ? "Atualizando..." : "Atualizar Cotações"}
+        </button>
+      </div>
 
       {/* Lista por categoria */}
       {CATS.map(cat => {
@@ -547,13 +565,8 @@ export default function InvestimentosClient() {
                         </div>
                       </div>
                       
-                      {/* Controles: Aportar, Cotação, Ocultar, Editar, Excluir */}
+                      {/* Controles: Aportar, Ocultar, Editar, Excluir */}
                       <div className="flex gap-2 items-center flex-wrap">
-                        {inv.ticker && (
-                          <button onClick={() => atualizarTicker(inv.id, inv.ticker!)} disabled={buscandoTicker[inv.id]} className="flex items-center gap-1 text-[11px] px-2 py-1 rounded bg-transparent" style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-                            <RefreshCw size={10} className={buscandoTicker[inv.id] ? "animate-spin" : ""} /> {buscandoTicker[inv.id] ? "buscando…" : "cotação"}
-                          </button>
-                        )}
                         {inv.cotas && (
                           <button onClick={() => setAportando(inv)} className="flex items-center gap-1 text-[11px] px-2 py-1 rounded bg-transparent" style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
                             <Plus size={10} /> aportar
