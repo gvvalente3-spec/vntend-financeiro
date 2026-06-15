@@ -10,8 +10,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { brl, mesAtual, mesDoLanc, formatData, MESES } from "@/lib/utils";
 import type { Lancamento, Conta, Cartao, Orcamento } from "@/types/database";
-import { iconeDaCategoria, corDaCategoria, type CatMeta } from "@/components/categoryIcons";
-
+import { iconeDaCategoria, corDaCategoria, type CatMeta } from "@/components/layout/categoryIcons";
 // Tipo da árvore de categorias (tabela "categorias")
 interface CategoriaRow {
   id: string; tipo: "despesa" | "receita";
