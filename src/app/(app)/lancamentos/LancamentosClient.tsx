@@ -75,9 +75,8 @@ function CampoBusca({ value, onChange, placeholder }: {
 function ItemLanc({ l, catMeta, onEditar, onDeletar }: {
   l: Lancamento; catMeta: CatMeta[];
   onEditar: (l: Lancamento) => void; onDeletar: (id: string) => void;
-}) {
-  const isRec = l.tipo === "receita";
-  const Icone = iconeDaCategoria(l.cat, catMeta);
+const Icone = iconeDaCategoria(l.cat, catMeta, l.tipo);
+const cor = isRec ? "#4caf82" : corDaCategoria(l.cat, catMeta, l.tipo);
   const cor = isRec ? "#4caf82" : corDaCategoria(l.cat, catMeta);
   return (
     <div className="flex items-center gap-3 px-4 py-2.5 border-b last:border-0" style={{ borderColor: "var(--border)" }}>
