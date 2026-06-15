@@ -183,6 +183,7 @@ export interface Investimento {
   moeda: "BRL" | "USD";
   valor: number | null;
   obj: "reserva" | "leilao" | "aluguel27" | null;
+  hidden: boolean;
 }
 
 export interface InvestMetas {
