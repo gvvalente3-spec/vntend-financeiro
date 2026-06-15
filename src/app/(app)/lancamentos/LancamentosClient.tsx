@@ -79,6 +79,7 @@ function ItemLanc({ l, catMeta, onEditar, onDeletar }: {
   const isRec = l.tipo === "receita";
   const Icone = iconeDaCategoria(l.cat, catMeta, l.tipo);
   const cor = isRec ? "#4caf82" : corDaCategoria(l.cat, catMeta, l.tipo);
+
   return (
     <div className="flex items-center gap-3 px-4 py-2.5 border-b last:border-0" style={{ borderColor: "var(--border)" }}>
       {/* Ícone da categoria */}
@@ -86,6 +87,7 @@ function ItemLanc({ l, catMeta, onEditar, onDeletar }: {
         style={{ background: `${cor}1a`, color: cor }}>
         <Icone size={17} />
       </span>
+
       <div className="flex-1 min-w-0">
         <p className="text-sm truncate">{l.descricao || (isRec ? "Receita" : "Despesa")}</p>
         <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
@@ -93,9 +95,11 @@ function ItemLanc({ l, catMeta, onEditar, onDeletar }: {
           {l.cartao_id && !l.pago ? " · em aberto" : ""}
         </p>
       </div>
+
       <span className="text-sm font-semibold flex-shrink-0 mr-1" style={{ color: isRec ? "#4caf82" : "var(--danger)" }}>
         {isRec ? "+" : "−"}{brl(Number(l.valor))}
       </span>
+
       <div className="flex gap-1 flex-shrink-0">
         <button onClick={() => onEditar(l)} style={{ color: "var(--text-muted)" }}><Pencil size={13} /></button>
         <button onClick={() => onDeletar(l.id)} style={{ color: "var(--text-muted)" }}><Trash2 size={13} /></button>
