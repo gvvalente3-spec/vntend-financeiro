@@ -11,6 +11,7 @@ import { useWorkspace } from "@/hooks/useWorkspace";
 import { brl, mesAtual, mesDoLanc, formatData, MESES } from "@/lib/utils";
 import type { Lancamento, Conta, Cartao, Orcamento } from "@/types/database";
 import { iconeDaCategoria, corDaCategoria, type CatMeta } from "@/components/layout/categoryIcons";
+
 // Tipo da árvore de categorias (tabela "categorias")
 interface CategoriaRow {
   id: string; tipo: "despesa" | "receita";
@@ -123,8 +124,8 @@ function OrcamentosPanel({ lancamentos, orcamentos, categorias, catMeta, workspa
     <div className="flex flex-col gap-1">
       {catsOrdenadas.map((cat, idx) => {
         const catData = tree[cat] || { total: 0, subs: {} };
-        const Icone = iconeDaCategoria(cat, catMeta);
-        const cor = corDaCategoria(cat, catMeta) || PALETA[idx % PALETA.length];
+        const Icone = iconeDaCategoria(cat, catMeta, "despesa");
+        const cor = corDaCategoria(cat, catMeta, "despesa") || PALETA[idx % PALETA.length];
         const lim = calcLimite(cat, "", "", orcamentos);
         const pct = lim > 0 ? Math.min((catData.total / lim) * 100, 100) : 0;
         const estourou = lim > 0 && catData.total > lim;
@@ -205,8 +206,9 @@ function OrcamentosPanel({ lancamentos, orcamentos, categorias, catMeta, workspa
 // ——— Item de lançamento (com ícone da categoria) ———
 function ItemLanc({ l, catMeta }: { l: Lancamento; catMeta: CatMeta[] }) {
   const isRec = l.tipo === "receita";
-  const Icone = iconeDaCategoria(l.cat, catMeta);
-  const cor = isRec ? "#4caf82" : corDaCategoria(l.cat, catMeta);
+  const Icone = iconeDaCategoria(l.cat, catMeta, l.tipo);
+  const cor = isRec ? "#4caf82" : corDaCategoria(l.cat, catMeta, l.tipo);
+  
   return (
     <div className="flex items-center gap-3 px-4 py-2.5 border-b last:border-0" style={{ borderColor: "var(--border)" }}>
       <span className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
