@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState, useCallback } from "react";
 import { Plus, Trash2, Check, Info, AlertTriangle } from "lucide-react";
@@ -10,8 +10,8 @@ import type { Missao, Perfil } from "@/types/database";
 
 function Modal({ titulo, fechar, children }: { titulo: string; fechar: () => void; children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ background: "rgba(0,0,0,0.6)" }} onClick={fechar}>
-      <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 flex flex-col gap-4 max-h-[90vh] overflow-y-auto"
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center pb-12 sm:pb-0" style={{ background: "rgba(0,0,0,0.6)" }} onClick={fechar}>
+      <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 flex flex-col gap-4 max-h-[80vh] overflow-y-auto"
         style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between">
@@ -299,4 +299,3 @@ export default function MissoesClient() {
     </div>
   );
 }
-
