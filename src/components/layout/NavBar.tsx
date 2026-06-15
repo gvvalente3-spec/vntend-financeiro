@@ -4,8 +4,8 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  LayoutGrid, ListPlus, Wallet, FileText, MoreHorizontal,
-  Repeat, Compass, Receipt, SlidersHorizontal, TrendingUp, X,
+  LayoutGrid, ListPlus, Wallet, TrendingUp, MoreHorizontal,
+  FileText, Repeat, Compass, Receipt, SlidersHorizontal, X,
 } from "lucide-react";
 
 // 4 abas fixas + "Mais"
@@ -13,12 +13,12 @@ const ABAS = [
   { href: "/", icon: LayoutGrid, label: "Visão" },
   { href: "/lancamentos", icon: ListPlus, label: "Lançar" },
   { href: "/contas", icon: Wallet, label: "Contas" },
-  { href: "/contracheque", icon: FileText, label: "Contra." },
+  { href: "/investimentos", icon: TrendingUp, label: "Investir" },
 ] as const;
 
-// Menu "Mais" — Investimentos aqui (não mais duplicado no navbar principal)
+// Menu "Mais" — Contracheque aqui (sem duplicata no bar principal)
 const MAIS = [
-  { href: "/investimentos", icon: TrendingUp, label: "Investimentos", desc: "Carteira, alocação e objetivos" },
+  { href: "/contracheque", icon: FileText, label: "Contracheque", desc: "Simulador e histórico" },
   { href: "/recorrencias", icon: Repeat, label: "Fixas", desc: "Receitas e despesas recorrentes" },
   { href: "/missoes", icon: Compass, label: "Missões", desc: "Diárias e gratificações" },
   { href: "/ir", icon: Receipt, label: "Imposto de Renda", desc: "Projeção anual do IR" },
