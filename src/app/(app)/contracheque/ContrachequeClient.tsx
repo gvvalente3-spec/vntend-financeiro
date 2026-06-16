@@ -1,34 +1,49 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { ChevronDown, ChevronUp, RefreshCw, Info } from "lucide-react";
+import { ChevronDown, ChevronUp, RefreshCw, Info, Plus, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { brl, MESES } from "@/lib/utils";
 import type { Perfil } from "@/types/database";
 
-// —— Tabelas do IR 2026 — mensal ——
+// —— Tabela Progressiva IR 2026 — mensal (Lei nº 15.191/2025) ——
 const TABELA_IR = [
-  { ate: 2428.8,   aliquota: 0,     deducao: 0 },
-  { ate: 3751.05,  aliquota: 0.075, deducao: 182.16 },
-  { ate: 4664.68,  aliquota: 0.15,  deducao: 394.16 },
-  { ate: 6101.06,  aliquota: 0.225, deducao: 744.15 },
-  { ate: Infinity, aliquota: 0.275, deducao: 1049.41 },
+  { ate: 2428.80,  aliquota: 0,     deducao: 0 },
+  { ate: 2826.65,  aliquota: 0.075, deducao: 182.16 },
+  { ate: 3751.05,  aliquota: 0.15,  deducao: 394.16 },
+  { ate: 4664.68,  aliquota: 0.225, deducao: 675.49 },
+  { ate: Infinity, aliquota: 0.275, deducao: 884.96 },
 ];
 
-const DEP_DEDUCAO = 189.59; // dedução mensal por dependente
-const AUX_PRE_ESCOLAR_BRUTO = 526.34; // valor bruto — Portaria MGI 2.785/2026 (reajuste abr/2026)
-const COTA_PARTE_PRE_ESCOLAR_PCT = 0.05; // 5% de cota-parte descontada no contracheque
-
-function calcIR(base: number, dependentes: number): number {
-  const baseAjustada = Math.max(0, base - DEP_DEDUCAO * dependentes);
-  const faixa = TABELA_IR.find(f => baseAjustada <= f.ate);
-  if (!faixa || faixa.aliquota === 0) return 0;
-  return Math.max(0, baseAjustada * faixa.aliquota - faixa.deducao);
+// Redutor da Lei 15.270/2025 — aplicado APÓS o cálculo pela tabela progressiva
+// Até R$5.000 de rend. tributável → redução de até R$312,89 (zerando o IR)
+// De R$5.000,01 a R$7.350 → redução decrescente: R$978,62 − (0,133145 × rendimentos)
+function aplicarRedutor(irBruto: number, rendimentosTributaveis: number): number {
+  if (rendimentosTributaveis <= 5000) {
+    // Zera o IR (redução de até R$312,89)
+    return 0;
+  } else if (rendimentosTributaveis <= 7350) {
+    const reducao = Math.max(0, 978.62 - 0.133145 * rendimentosTributaveis);
+    return Math.max(0, irBruto - reducao);
+  }
+  return irBruto;
 }
 
-// IR exclusivo do 13º (novembro) — sem FuSEx/Pensão, com dedução de dependentes
-// Base: remuneração integral — sem deduções previdenciárias (Lei nº 13.954/2019)
+const DEP_DEDUCAO = 189.59; // dedução mensal por dependente
+const AUX_PRE_ESCOLAR_BRUTO = 526.34; // Portaria MGI 2.785/2026 (reajuste abr/2026)
+const COTA_PARTE_PRE_ESCOLAR_PCT = 0.05;
+
+function calcIR(baseContrib: number, dependentes: number, rendimentosTributaveis: number): number {
+  const baseAjustada = Math.max(0, baseContrib - DEP_DEDUCAO * dependentes);
+  const faixa = TABELA_IR.find(f => baseAjustada <= f.ate);
+  if (!faixa || faixa.aliquota === 0) return 0;
+  const irBruto = Math.max(0, baseAjustada * faixa.aliquota - faixa.deducao);
+  // Aplica redutor usando rendimentos tributáveis (base antes da previdência e dependentes)
+  return aplicarRedutor(irBruto, rendimentosTributaveis);
+}
+
+// IR exclusivo do 13º — sem redutor (regime exclusivo na fonte, não se aplica isenção mensal)
 function calcIR13(base13: number, dependentes: number): number {
   const baseAjustada = Math.max(0, base13 - DEP_DEDUCAO * dependentes);
   const faixa = TABELA_IR.find(f => baseAjustada <= f.ate);
@@ -36,29 +51,20 @@ function calcIR13(base13: number, dependentes: number): number {
   return Math.max(0, baseAjustada * faixa.aliquota - faixa.deducao);
 }
 
-// —— Soldo base por posto (valores EB 2026) ——
+// —— Soldos por posto (EB 2026) ——
 const SOLDOS: Record<string, number> = {
-  "Soldado": 2400,
-  "Cabo": 2800,
-  "3º Sargento": 3200,
-  "2º Sargento": 3600,
-  "1º Sargento": 4100,
-  "Subtenente": 4800,
-  "Aspirante a Oficial": 5400,
-  "2º Tenente": 6200,
-  "1º Tenente": 7100,
-  "Capitão": 9976,
-  "Major": 13200,
-  "Tenente-Coronel": 16400,
-  "Coronel": 19800,
-  "General de Brigada": 24000,
-  "General de Divisão": 27000,
-  "General de Exército": 30000,
+  "Soldado": 2400, "Cabo": 2800, "3º Sargento": 3200, "2º Sargento": 3600,
+  "1º Sargento": 4100, "Subtenente": 4800, "Aspirante a Oficial": 5400,
+  "2º Tenente": 6200, "1º Tenente": 7100, "Capitão": 9976,
+  "Major": 13200, "Tenente-Coronel": 16400, "Coronel": 19800,
+  "General de Brigada": 24000, "General de Divisão": 27000, "General de Exército": 30000,
 };
 
 function soldo(perfil: Perfil): number {
   return perfil.soldo_override || SOLDOS[perfil.posto] || 0;
 }
+
+interface DescontoExtra { desc: string; valor: number; }
 
 interface SimResult {
   rendimentos: Array<{ label: string; valor: number; isento?: boolean }>;
@@ -67,9 +73,9 @@ interface SimResult {
   totalDescontos: number;
   previdencia: number;
   baseIR: number;
+  rendTributavel: number;
   ir: number;
   liquido: number;
-  // Natalino
   temNatalino: boolean;
   parcela13Label: string;
   valor13: number;
@@ -80,7 +86,7 @@ interface SimResult {
 function simularCC(
   perfil: Perfil,
   mes: number,
-  extras: { missaoLiq: number; outroValor: number; outroDesc: string }
+  extras: { missaoLiq: number; outroValor: number; outroDesc: string; descontosLivres: DescontoExtra[] }
 ): SimResult {
   const s = soldo(perfil);
   const hab = s * (perfil.habilitacao_pct / 100);
@@ -89,27 +95,30 @@ function simularCC(
   const adMil = s * (perfil.adicional_militar_pct / 100);
   const cdm = s * (perfil.comp_disp_mil_pct / 100);
 
-  // Pré-escolar (Arthur / dependentes < 7 anos)
   const depPreEscolar = perfil.dependentes_pre_escolar || 0;
   const auxPreEscolarBruto = depPreEscolar > 0 ? depPreEscolar * AUX_PRE_ESCOLAR_BRUTO : 0;
   const cotaPartePreEscolar = auxPreEscolarBruto * COTA_PARTE_PRE_ESCOLAR_PCT;
-  const auxPreEscolarLiq = auxPreEscolarBruto - cotaPartePreEscolar;
 
-  // Rendimentos tributáveis (base do IR mensal)
+  // Rendimentos tributáveis (sem isentos)
   const rendTributavel = s + hab + gle + comp + adMil + cdm
     + (extras.outroValor || 0)
     + (perfil.cc_receitas_extras || []).reduce((a, e) => a + e.valor, 0);
 
-  // PREVIDÊNCIA: base de contribuição = Soldo + Hab + Comp + AdMil + CDM
+  // Previdência: base = Soldo + Hab + Comp + AdMil + CDM
   const baseContrib = s + hab + comp + adMil + cdm;
   const fusex = baseContrib * (perfil.fusex_pct / 100);
   const pensao = baseContrib * (perfil.pensao_pct / 100);
   const previdencia = fusex + pensao;
 
+  // Base IR = rendTributavel − previdência
   const baseIR = Math.max(0, rendTributavel - previdencia);
-  const ir = calcIR(baseIR, perfil.dependentes || 0);
+  // Redutor usa rendTributavel (bruto antes de previdência, conforme orientação RF)
+  const ir = calcIR(baseIR, perfil.dependentes || 0, rendTributavel);
 
-  // Rendimentos — lista para exibição
+  // PNR
+  const pnrAtivo = !!(perfil as any).pnr_ativo;
+  const pnrTaxa = (perfil as any).pnr_taxa || 0;
+
   const rendimentos: Array<{ label: string; valor: number; isento?: boolean }> = [
     { label: "Soldo", valor: s },
     ...(hab > 0 ? [{ label: "Adicional de Habilitação", valor: hab }] : []),
@@ -123,78 +132,58 @@ function simularCC(
     ...(perfil.cc_receitas_extras || []).map(e => ({ label: e.desc, valor: e.valor })),
   ];
 
-  const totalRendimentos = rendimentos.reduce((sum, r) => sum + r.valor, 0)
-    + (extras.missaoLiq || 0); // já está na lista se > 0, não soma duplo
-  // Recalcula sem duplo-cômputo
   const totalRend = rendimentos.reduce((sum, r) => sum + r.valor, 0);
 
   const descontos: Array<{ label: string; valor: number }> = [
     { label: `FuSEx (${perfil.fusex_pct}%)`, valor: fusex },
     { label: `Pensão Militar (${perfil.pensao_pct}%)`, valor: pensao },
     ...(cotaPartePreEscolar > 0 ? [{ label: "Cota-parte Pré-escolar (5%)", valor: cotaPartePreEscolar }] : []),
+    ...(pnrAtivo && pnrTaxa > 0 ? [{ label: "Taxa PNR", valor: pnrTaxa }] : []),
     { label: "Imposto de Renda", valor: ir },
+    // descontos livres do simulador (consignados, etc.)
+    ...extras.descontosLivres.filter(d => d.valor > 0).map(d => ({ label: d.desc || "Desconto", valor: d.valor })),
+    // descontos extras do perfil
     ...(perfil.cc_descontos_extras || []).map(e => ({ label: e.desc, valor: e.valor })),
   ];
 
   const totalDescontos = descontos.reduce((sum, d) => sum + d.valor, 0);
   const liquido = totalRend - totalDescontos;
 
-  // ——— ADICIONAL NATALINO ———
-  // Legislação EB (cap7): 1ª parcela paga automaticamente em JUNHO (A84)
-  // 2ª parcela paga em NOVEMBRO (A85), com IR exclusivo na fonte (Z33)
-  // A 1ª parcela = 50% da remuneração do mês de junho, sem IR
-  // A 2ª parcela = remuneração integral menos G84 (1ª parcela), com IR exclusivo
-  // Para o simulador: mostramos a parcela correspondente ao mês
-
+  // —— ADICIONAL NATALINO ——
   let temNatalino = false;
   let parcela13Label = "";
   let valor13 = 0;
   let ir13 = 0;
   let liquido13 = 0;
-
-  // Base do natalino = remuneração tributável mensal (sem isentos)
-  const baseNatalino = rendTributavel; // tributável do mês corrente
+  const baseNatalino = rendTributavel;
 
   if (mes === 6) {
-    // Junho: 1ª parcela = 50% da remuneração, SEM IR (A84)
     temNatalino = true;
     parcela13Label = "1ª Parcela — Adicional Natalino (A84)";
     valor13 = Math.round(baseNatalino * 0.5 * 100) / 100;
-    ir13 = 0; // isento — tributação exclusiva na 2ª parcela em nov
+    ir13 = 0;
     liquido13 = valor13;
   } else if (mes === 11) {
-    // Novembro: 2ª parcela = remuneração integral, com IR exclusivo (A85/Z33)
-    // A 1ª parcela (G84) é descontada do valor bruto
     temNatalino = true;
     parcela13Label = "2ª Parcela — Adicional Natalino (A85)";
-    const bruto2a = baseNatalino; // remuneração integral
-    const descG84 = Math.round(bruto2a * 0.5 * 100) / 100; // desconta 1ª parcela paga em junho
-    const valorBruto2a = bruto2a - descG84; // = 50% da remuneração (saldo)
-    // IR do 13º incide sobre remuneração integral (A85 antes do desconto G84)
-    // conforme legislação: tributação exclusiva sobre o total do 13º
+    const bruto2a = baseNatalino;
+    const descG84 = Math.round(bruto2a * 0.5 * 100) / 100;
+    const valorBruto2a = bruto2a - descG84;
     ir13 = calcIR13(bruto2a, perfil.dependentes || 0);
-    valor13 = valorBruto2a; // valor bruto da 2ª parcela (já descontado G84)
+    valor13 = valorBruto2a;
     liquido13 = valorBruto2a - ir13;
   }
 
   return {
-    rendimentos,
-    descontos,
-    totalRendimentos: totalRend,
-    totalDescontos,
-    previdencia,
-    baseIR,
-    ir,
-    liquido,
-    temNatalino,
-    parcela13Label,
-    valor13,
-    ir13,
-    liquido13,
+    rendimentos, descontos, totalRendimentos: totalRend, totalDescontos,
+    previdencia, baseIR, rendTributavel, ir, liquido,
+    temNatalino, parcela13Label, valor13, ir13, liquido13,
   };
 }
 
-// —— Componente principal ——
+const inputCls = "rounded-lg px-3 py-2 text-sm outline-none w-full";
+const inputStyle = { background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)" };
+
 export default function ContrachequeClient() {
   const { workspaceId, loading: wsLoading } = useWorkspace();
   const [perfil, setPerfil] = useState<Perfil | null>(null);
@@ -208,14 +197,19 @@ export default function ContrachequeClient() {
   const [outroDesc, setOutroDesc] = useState("");
   const [expandido, setExpandido] = useState(true);
 
+  // Descontos livres (consignados, etc.)
+  const [descontosLivres, setDescontosLivres] = useState<DescontoExtra[]>([]);
+
+  const addDesconto = () => setDescontosLivres(v => [...v, { desc: "", valor: 0 }]);
+  const removeDesconto = (i: number) => setDescontosLivres(v => v.filter((_, j) => j !== i));
+  const updateDesconto = (i: number, field: keyof DescontoExtra, val: string) =>
+    setDescontosLivres(v => v.map((d, j) => j === i ? { ...d, [field]: field === "valor" ? Number(val) || 0 : val } : d));
+
   const carregar = useCallback(async () => {
     if (!workspaceId) return;
     setCarregando(true);
     const { data } = await createClient()
-      .from("perfil")
-      .select("*")
-      .eq("workspace_id", workspaceId)
-      .maybeSingle();
+      .from("perfil").select("*").eq("workspace_id", workspaceId).maybeSingle();
     setPerfil(data as unknown as Perfil | null);
     setCarregando(false);
   }, [workspaceId]);
@@ -240,19 +234,21 @@ export default function ContrachequeClient() {
     missaoLiq: Number(missaoLiq) || 0,
     outroValor: Number(outroValor) || 0,
     outroDesc,
+    descontosLivres,
   });
 
-  // Mês de pagamento = mês seguinte ao de referência
   const proxMes = mes === 12 ? 1 : mes + 1;
   const proxAno = mes === 12 ? ano + 1 : ano;
   const labelPag = `1º dia útil de ${MESES[proxMes - 1]}/${proxAno}`;
-
   const liquidoTotal = resultado.liquido + (resultado.temNatalino ? resultado.liquido13 : 0);
+
+  // Verifica se o redutor está sendo aplicado
+  const comReducao = resultado.rendTributavel <= 7350 && resultado.rendTributavel > 0;
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-4 flex flex-col gap-4">
 
-      {/* Header + mês de referência */}
+      {/* Header + mês */}
       <div className="rounded-xl px-4 py-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
         <div className="flex items-center justify-between mb-2">
           <p className="text-sm font-semibold">Simulador de Contracheque</p>
@@ -264,62 +260,79 @@ export default function ContrachequeClient() {
         <div className="grid grid-cols-2 gap-2">
           <div className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
             Mês de referência
-            <select value={mes} onChange={e => setMes(Number(e.target.value))}
-              className="rounded-lg px-2 py-1.5 text-sm outline-none"
-              style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)" }}>
+            <select value={mes} onChange={e => setMes(Number(e.target.value))} className="rounded-lg px-2 py-1.5 text-sm outline-none" style={inputStyle}>
               {MESES.map((n, i) => <option key={i} value={i + 1}>{n}</option>)}
             </select>
           </div>
           <div className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
             Ano
-            <select value={ano} onChange={e => setAno(Number(e.target.value))}
-              className="rounded-lg px-2 py-1.5 text-sm outline-none"
-              style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)" }}>
+            <select value={ano} onChange={e => setAno(Number(e.target.value))} className="rounded-lg px-2 py-1.5 text-sm outline-none" style={inputStyle}>
               {[2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
             </select>
           </div>
         </div>
       </div>
 
-      {/* Variáveis extras */}
+      {/* Adicionais / Descontos deste mês */}
       <div className="rounded-xl p-4 flex flex-col gap-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-        <button className="flex items-center justify-between w-full"
-          onClick={() => setExpandido(v => !v)}>
-          <p className="text-sm font-semibold">Adicionais deste mês</p>
+        <button className="flex items-center justify-between w-full" onClick={() => setExpandido(v => !v)}>
+          <p className="text-sm font-semibold">Adicionais e descontos deste mês</p>
           {expandido ? <ChevronUp size={16} style={{ color: "var(--text-muted)" }} /> : <ChevronDown size={16} style={{ color: "var(--text-muted)" }} />}
         </button>
         {expandido && (
-          <div className="flex flex-col gap-2.5">
+          <div className="flex flex-col gap-3">
+            {/* Missão */}
             <label className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
               Ressarcimento de missão — líquido (R$) — isento IR
-              <input type="number" step="0.01" value={missaoLiq}
-                onChange={e => setMissaoLiq(e.target.value)} placeholder="0,00"
-                className="rounded-lg px-3 py-2 text-sm outline-none"
-                style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)" }} />
+              <input type="number" step="0.01" value={missaoLiq} onChange={e => setMissaoLiq(e.target.value)} placeholder="0,00" className={inputCls} style={inputStyle} />
             </label>
+
+            {/* Outro adicional */}
             <div className="grid grid-cols-2 gap-2">
               <label className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
                 Outro adicional (R$)
-                <input type="number" step="0.01" value={outroValor}
-                  onChange={e => setOutroValor(e.target.value)} placeholder="0,00"
-                  className="rounded-lg px-3 py-2 text-sm outline-none"
-                  style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)" }} />
+                <input type="number" step="0.01" value={outroValor} onChange={e => setOutroValor(e.target.value)} placeholder="0,00" className={inputCls} style={inputStyle} />
               </label>
               <label className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
                 Descrição
-                <input type="text" value={outroDesc}
-                  onChange={e => setOutroDesc(e.target.value)} placeholder="Ex: Aux. Natalidade"
-                  className="rounded-lg px-3 py-2 text-sm outline-none"
-                  style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)" }} />
+                <input type="text" value={outroDesc} onChange={e => setOutroDesc(e.target.value)} placeholder="Ex: Aux. Natalidade" className={inputCls} style={inputStyle} />
               </label>
+            </div>
+
+            {/* Descontos livres (consignados etc.) */}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>Outros descontos (consignado, etc.)</span>
+                <button onClick={addDesconto}
+                  className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg"
+                  style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                  <Plus size={12} /> Adicionar
+                </button>
+              </div>
+              {descontosLivres.map((d, i) => (
+                <div key={i} className="grid grid-cols-2 gap-2 items-end">
+                  <label className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
+                    Descrição
+                    <input type="text" value={d.desc} onChange={e => updateDesconto(i, "desc", e.target.value)} placeholder="Ex: Consignado FHE" className={inputCls} style={inputStyle} />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
+                    Valor (R$)
+                    <div className="flex gap-1">
+                      <input type="number" step="0.01" value={d.valor || ""} onChange={e => updateDesconto(i, "valor", e.target.value)} placeholder="0,00" className={inputCls} style={inputStyle} />
+                      <button onClick={() => removeDesconto(i)} style={{ color: "var(--danger)", flexShrink: 0 }}>
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </label>
+                </div>
+              ))}
             </div>
           </div>
         )}
       </div>
 
-      {/* Card líquido principal */}
-      <div className="rounded-2xl px-5 py-5 flex flex-col gap-1"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      {/* Card líquido */}
+      <div className="rounded-2xl px-5 py-5 flex flex-col gap-1" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
         <p className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>
           Líquido estimado — {MESES[mes - 1]}/{ano}
           {resultado.temNatalino && <span style={{ color: "var(--primary)" }}> · inclui Natalino</span>}
@@ -342,7 +355,7 @@ export default function ContrachequeClient() {
         </div>
       </div>
 
-      {/* Card Adicional Natalino (junho ou novembro) */}
+      {/* Natalino */}
       {resultado.temNatalino && (
         <div className="rounded-xl px-4 py-3" style={{ background: "rgba(42,138,114,0.07)", border: "1px solid var(--primary)" }}>
           <p className="text-sm font-semibold mb-2" style={{ color: "var(--primary)" }}>
@@ -364,22 +377,13 @@ export default function ContrachequeClient() {
               <span style={{ color: "#4caf82" }}>{brl(resultado.liquido13)}</span>
             </div>
           </div>
-          {mes === 6 && (
-            <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>
-              1ª parcela paga automaticamente (A84) — sem IR. Em novembro, a 2ª parcela (A85) paga o saldo com IR exclusivo (Z33).
-            </p>
-          )}
-          {mes === 11 && (
-            <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>
-              2ª parcela (A85) = remuneração integral. O G84 (adiantamento de junho) é abatido. IR exclusivo na fonte (Z33) — sem dedução de FuSEx/Pensão; dedução de dependentes aplicada.
-            </p>
-          )}
+          {mes === 6 && <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>1ª parcela (A84) — sem IR. 2ª parcela em novembro (A85) com IR exclusivo (Z33).</p>}
+          {mes === 11 && <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>2ª parcela (A85) = remuneração integral. G84 abatido. IR exclusivo (Z33) — sem dedução de FuSEx/Pensão; dedução de dependentes aplicada.</p>}
         </div>
       )}
 
       {/* Detalhamento */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {/* Rendimentos */}
         <div className="rounded-xl px-4 py-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <p className="text-sm font-semibold mb-2" style={{ color: "#4caf82" }}>Rendimentos</p>
           <div className="flex flex-col gap-1">
@@ -398,7 +402,6 @@ export default function ContrachequeClient() {
           </div>
         </div>
 
-        {/* Descontos */}
         <div className="rounded-xl px-4 py-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <p className="text-sm font-semibold mb-2" style={{ color: "var(--danger)" }}>Descontos</p>
           <div className="flex flex-col gap-1">
@@ -416,16 +419,15 @@ export default function ContrachequeClient() {
         </div>
       </div>
 
-      {/* Pré-escolar — aviso informativo */}
+      {/* Aviso pré-escolar */}
       {(perfil.dependentes_pre_escolar || 0) > 0 && (
         <div className="flex items-start gap-2 rounded-xl px-4 py-3 text-xs"
           style={{ background: "rgba(42,138,114,0.06)", border: "1px solid rgba(42,138,114,0.2)", color: "var(--text-muted)" }}>
           <Info size={14} className="flex-shrink-0 mt-0.5" style={{ color: "var(--primary)" }} />
           <span>
-            <b style={{ color: "var(--text)" }}>Auxílio Pré-escolar</b> — R$ {AUX_PRE_ESCOLAR_BRUTO.toFixed(2)} bruto por dependente &lt;7 anos (valor 2026).
-            Desconto de cota-parte (5%) = R$ {(AUX_PRE_ESCOLAR_BRUTO * COTA_PARTE_PRE_ESCOLAR_PCT).toFixed(2)}.
-            Líquido: R$ {(AUX_PRE_ESCOLAR_BRUTO * 0.95).toFixed(2)}/dep. — <b style={{ color: "var(--text)" }}>isento de IR</b>.
-            Configure dependentes pré-escolares em Ajustes → Perfil Militar.
+            <b style={{ color: "var(--text)" }}>Auxílio Pré-escolar</b> — R$ {AUX_PRE_ESCOLAR_BRUTO.toFixed(2)} bruto/dep. (Portaria MGI 2.785/2026).
+            Cota-parte 5% = R$ {(AUX_PRE_ESCOLAR_BRUTO * COTA_PARTE_PRE_ESCOLAR_PCT).toFixed(2)}.
+            Líquido: <b style={{ color: "var(--text)" }}>R$ {(AUX_PRE_ESCOLAR_BRUTO * 0.95).toFixed(2)}/dep.</b> — isento de IR.
           </span>
         </div>
       )}
@@ -435,7 +437,7 @@ export default function ContrachequeClient() {
         <p className="text-xs font-medium mb-1.5" style={{ color: "var(--text-muted)" }}>Cálculo do IR mensal (estimado)</p>
         <div className="flex flex-wrap gap-x-4 gap-y-1">
           <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-            Rend. Trib. <b style={{ color: "var(--text)" }}>{brl(resultado.baseIR + resultado.previdencia)}</b>
+            Rend. Trib. <b style={{ color: "var(--text)" }}>{brl(resultado.rendTributavel)}</b>
           </span>
           <span className="text-xs" style={{ color: "var(--text-muted)" }}>
             − Previdência <b style={{ color: "var(--text)" }}>{brl(resultado.previdencia)}</b>
@@ -444,12 +446,17 @@ export default function ContrachequeClient() {
             − Dep. ({perfil.dependentes}) <b style={{ color: "var(--text)" }}>{brl(DEP_DEDUCAO * (perfil.dependentes || 0))}</b>
           </span>
           <span className="text-xs font-semibold" style={{ color: "var(--text-muted)" }}>
-            = Base IR <b style={{ color: "var(--text)" }}>{brl(resultado.baseIR - DEP_DEDUCAO * (perfil.dependentes || 0))}</b>
+            = Base <b style={{ color: "var(--text)" }}>{brl(resultado.baseIR - DEP_DEDUCAO * (perfil.dependentes || 0))}</b>
             {" · "}IR <b style={{ color: "var(--danger)" }}>{brl(resultado.ir)}</b>
           </span>
         </div>
-        <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>
-          * Simulação. Valores reais no CPEx podem diferir. Para cálculo preciso do IR anual, use <b>Mais → Imposto de Renda</b>.
+        {comReducao && (
+          <p className="text-xs mt-1.5" style={{ color: "var(--primary)" }}>
+            ✓ Redutor Lei 15.270/2025 aplicado (isenção efetiva até R$ 5.000 / parcial até R$ 7.350 de rend. tributável)
+          </p>
+        )}
+        <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+          * Simulação. Tabela progressiva 2026 + redutor Lei 15.270/2025. Valores reais no CPEx podem diferir.
           {resultado.temNatalino && mes === 11 && " IR do 13º (Z33) calculado separado acima."}
         </p>
       </div>
