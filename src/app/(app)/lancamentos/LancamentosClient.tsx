@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   Plus, Search, X, TrendingUp, TrendingDown,
-  FileText, ChevronLeft, ChevronRight, Pencil, Trash2, Upload
+  FileText, ChevronLeft, ChevronRight, Pencil, Trash2, Upload, Layers
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
@@ -153,11 +153,45 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
       cartao_id: tipo === "despesa" ? (cartaoId || null) : null,
       pago, fiscal: "", rec_id: null, parcela_num: null, parcela_total: null,
     } as Record<string, unknown>;
+
     if (lancamento?.id) {
+      // Edição: detectar mudança de conta/valor para corrigir saldo
+      const contaAnterior = lancamento.conta_id;
+      const contaNova = contaId || null;
+      const valorAnterior = Number(lancamento.valor);
+      const tipoAnterior = lancamento.tipo;
+
       await supabase.from("lancamentos").update(payload).eq("id", lancamento.id);
+
+      // Reverter efeito anterior no saldo
+      if (contaAnterior && lancamento.pago && !lancamento.cartao_id) {
+        const contaObj = contas.find(c => c.id === contaAnterior);
+        if (contaObj) {
+          const reverter = tipoAnterior === "receita" ? -valorAnterior : valorAnterior;
+          await supabase.from("contas").update({ saldo: Number(contaObj.saldo) + reverter } as Record<string, unknown>).eq("id", contaAnterior);
+        }
+      }
+      // Aplicar novo efeito no saldo
+      if (contaNova && pago && !cartaoId) {
+        // Recarregar saldo atualizado
+        const { data: contaAtual } = await supabase.from("contas").select("saldo").eq("id", contaNova).single();
+        const saldoAtual = Number((contaAtual as Record<string, unknown>)?.saldo ?? 0);
+        const delta = tipo === "receita" ? valorNum : -valorNum;
+        await supabase.from("contas").update({ saldo: saldoAtual + delta } as Record<string, unknown>).eq("id", contaNova);
+      }
     } else {
+      // Inserção nova
       await supabase.from("lancamentos").insert(payload);
+      // Atualizar saldo da conta se pago e não é cartão
+      if (contaId && pago && !cartaoId) {
+        const contaObj = contas.find(c => c.id === contaId);
+        if (contaObj) {
+          const delta = tipo === "receita" ? valorNum : -valorNum;
+          await supabase.from("contas").update({ saldo: Number(contaObj.saldo) + delta } as Record<string, unknown>).eq("id", contaId);
+        }
+      }
     }
+
     onSalvo();
     fechar();
     setSalvando(false);
@@ -276,6 +310,163 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
   );
 }
 
+// —— Modal de edição de parcelas em lote ——
+function ModalEdicaoParcelas({ lancamento, fechar, onSalvo, categorias }: {
+  lancamento: Lancamento & { grupo_parcelamento?: string | null };
+  fechar: () => void;
+  onSalvo: () => void;
+  categorias: CategoriaRow[];
+}) {
+  const [modo, setModo] = useState<null | "esta" | "todas" | "futuras">(null);
+  const [cat, setCat] = useState(lancamento.cat || "");
+  const [sub, setSub] = useState(lancamento.sub || "");
+  const [descricao, setDescricao] = useState(lancamento.descricao || "");
+  const [salvando, setSalvando] = useState(false);
+
+  const catsDoTipo = categorias.filter(c => c.tipo === lancamento.tipo);
+  const cats1 = [...new Set(catsDoTipo.map(c => c.cat))].sort();
+  const subs = cat ? [...new Set(catsDoTipo.filter(c => c.cat === cat && c.sub).map(c => c.sub as string))].sort() : [];
+
+  const temGrupo = !!(lancamento as Record<string, unknown>).grupo_parcelamento;
+
+  async function aplicar() {
+    if (!modo) return;
+    setSalvando(true);
+    const supabase = createClient();
+    const upd: Record<string, unknown> = { cat, sub: sub || null, descricao: descricao || null };
+
+    if (modo === "esta" || !temGrupo) {
+      await supabase.from("lancamentos").update(upd).eq("id", lancamento.id);
+    } else if (modo === "todas") {
+      const grupo = (lancamento as Record<string, unknown>).grupo_parcelamento as string;
+      await supabase.from("lancamentos").update(upd).eq("grupo_parcelamento", grupo);
+    } else if (modo === "futuras") {
+      const grupo = (lancamento as Record<string, unknown>).grupo_parcelamento as string;
+      const numAtual = lancamento.parcela_num ?? 0;
+      await supabase.from("lancamentos").update(upd)
+        .eq("grupo_parcelamento", grupo)
+        .gte("parcela_num", numAtual);
+    }
+
+    onSalvo();
+    fechar();
+    setSalvando(false);
+  }
+
+  async function excluir() {
+    if (!modo) return;
+    if (!confirm("Confirmar exclusão?")) return;
+    setSalvando(true);
+    const supabase = createClient();
+    if (modo === "esta" || !temGrupo) {
+      await supabase.from("lancamentos").delete().eq("id", lancamento.id);
+    } else if (modo === "todas") {
+      const grupo = (lancamento as Record<string, unknown>).grupo_parcelamento as string;
+      await supabase.from("lancamentos").delete().eq("grupo_parcelamento", grupo);
+    } else if (modo === "futuras") {
+      const grupo = (lancamento as Record<string, unknown>).grupo_parcelamento as string;
+      const numAtual = lancamento.parcela_num ?? 0;
+      await supabase.from("lancamentos").delete()
+        .eq("grupo_parcelamento", grupo)
+        .gte("parcela_num", numAtual);
+    }
+    onSalvo();
+    fechar();
+    setSalvando(false);
+  }
+
+  const eParcela = lancamento.parcela_num !== null && lancamento.parcela_total !== null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center pb-12 sm:pb-0"
+      style={{ background: "rgba(0,0,0,0.5)" }} onClick={fechar}>
+      <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col overflow-hidden"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", maxHeight: "85vh" }}
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--border)" }}>
+          <div>
+            <h3 className="font-semibold">Editar lançamento</h3>
+            {eParcela && <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>Parcela {lancamento.parcela_num}/{lancamento.parcela_total}</p>}
+          </div>
+          <button onClick={fechar} style={{ color: "var(--text-muted)" }}><X size={20} /></button>
+        </div>
+
+        {/* Seleção de escopo — só aparece se for parcela com grupo */}
+        {eParcela && temGrupo && !modo && (
+          <div className="p-5 flex flex-col gap-3">
+            <p className="text-sm font-medium">Aplicar alterações a…</p>
+            {[
+              { v: "esta" as const, label: "Só esta parcela", sub: `Parcela ${lancamento.parcela_num}/${lancamento.parcela_total}` },
+              { v: "futuras" as const, label: "Esta e as próximas", sub: `Da parcela ${lancamento.parcela_num} em diante` },
+              { v: "todas" as const, label: "Todas as parcelas", sub: `Todas as ${lancamento.parcela_total} parcelas` },
+            ].map(op => (
+              <button key={op.v} onClick={() => setModo(op.v)}
+                className="flex flex-col items-start px-4 py-3 rounded-xl text-left transition-colors"
+                style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
+                <span className="text-sm font-medium">{op.label}</span>
+                <span className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>{op.sub}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Formulário de edição — aparece após escolher modo ou se não for parcela */}
+        {(!eParcela || !temGrupo || modo) && (
+          <div className="overflow-y-auto p-5 flex flex-col gap-3" style={{ minHeight: 0, flex: "1 1 auto" }}>
+            {modo && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
+                style={{ background: "rgba(42,138,114,0.08)", border: "1px solid rgba(42,138,114,0.2)", color: "var(--primary)" }}>
+                <Layers size={13} />
+                {modo === "esta" && "Editando só esta parcela"}
+                {modo === "futuras" && `Editando parcelas ${lancamento.parcela_num} a ${lancamento.parcela_total}`}
+                {modo === "todas" && `Editando todas as ${lancamento.parcela_total} parcelas`}
+              </div>
+            )}
+            <div style={{ fontSize: 13, color: "var(--text-muted)", display: "flex", flexDirection: "column", gap: 4 }}>
+              Descrição
+              <input value={descricao} onChange={e => setDescricao(e.target.value)}
+                style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 14 }} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div style={{ fontSize: 13, color: "var(--text-muted)", display: "flex", flexDirection: "column", gap: 4 }}>
+                Categoria
+                <select value={cat} onChange={e => { setCat(e.target.value); setSub(""); }}
+                  style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 14 }}>
+                  <option value="">Selecione…</option>
+                  {cats1.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div style={{ fontSize: 13, color: "var(--text-muted)", display: "flex", flexDirection: "column", gap: 4 }}>
+                Subcategoria
+                <select value={sub} onChange={e => setSub(e.target.value)} disabled={subs.length === 0}
+                  style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 14 }}>
+                  <option value="">{subs.length === 0 ? "—" : "Opcional"}</option>
+                  {subs.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {(!eParcela || !temGrupo || modo) && (
+          <div className="flex gap-2 px-5 pb-5 pt-3 border-t flex-shrink-0" style={{ borderColor: "var(--border)" }}>
+            <button onClick={excluir} disabled={salvando}
+              className="px-4 py-2.5 rounded-xl text-sm font-medium disabled:opacity-50"
+              style={{ background: "rgba(239,68,68,0.08)", border: "1px solid var(--danger)", color: "var(--danger)" }}>
+              Excluir
+            </button>
+            <button onClick={aplicar} disabled={salvando || !cat}
+              className="flex-1 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
+              style={{ background: "var(--primary)", color: "#fff" }}>
+              {salvando ? "Salvando…" : "Salvar"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // —— Componente principal ——
 export default function LancamentosClient() {
   const { workspaceId, loading: wsLoading } = useWorkspace();
@@ -289,6 +480,7 @@ export default function LancamentosClient() {
 
   const [modalAberto, setModalAberto] = useState(false);
   const [lancamentoEd, setLancamentoEd] = useState<Lancamento | null>(null);
+  const [modalParcelasAberto, setModalParcelasAberto] = useState(false);
   const [contrachequeAberto, setContrachequeAberto] = useState(false);
   const [importarAberto, setImportarAberto] = useState(false); // Adicionado controle do modal
   const [searchQuery, setSearchQuery] = useState("");
@@ -328,7 +520,15 @@ export default function LancamentosClient() {
   }
 
   function abrirNovo() { setLancamentoEd(null); setModalAberto(true); }
-  function abrirEditar(l: Lancamento) { setLancamentoEd(l); setModalAberto(true); }
+  function abrirEditar(l: Lancamento) {
+    setLancamentoEd(l);
+    // Se for parcela, abre o modal específico de parcelas
+    if (l.parcela_num !== null && l.parcela_total !== null) {
+      setModalParcelasAberto(true);
+    } else {
+      setModalAberto(true);
+    }
+  }
 
   const [ano, mesNum] = mes.split("-").map(Number);
   const labelMes = `${MESES[mesNum - 1]}/${ano}`;
@@ -445,6 +645,14 @@ export default function LancamentosClient() {
           lancamento={lancamentoEd}
           fechar={() => setModalAberto(false)}
           onSalvo={carregar}
+        />
+      )}
+      {modalParcelasAberto && lancamentoEd && (
+        <ModalEdicaoParcelas
+          lancamento={lancamentoEd}
+          fechar={() => { setModalParcelasAberto(false); setLancamentoEd(null); }}
+          onSalvo={carregar}
+          categorias={categorias}
         />
       )}
       {contrachequeAberto && workspaceId && (
