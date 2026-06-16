@@ -117,6 +117,7 @@ export interface Lancamento {
   rec_id: string | null;
   parcela_num: number | null;
   parcela_total: number | null;
+  grupo_parcelamento: string | null;
 }
 
 export interface Orcamento {
@@ -221,4 +222,6 @@ export interface Perfil {
   cc_receitas_extras: Array<{ id: string; desc: string; valor: number }>;
   cc_descontos_extras: Array<{ id: string; desc: string; valor: number }>;
   valor_etapa: number;
+  pnr_ativo: boolean;
+  pnr_taxa: number;
 }
