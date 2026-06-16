@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Plus, Pencil, Trash2, Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
-import { brl, mesAtual, MESES, CATS_DEFAULT, type CatStore } from "@/lib/utils";
+import { brl, mesAtual, MESES, type CatStore } from "@/lib/utils";
 import type { Recorrencia, Conta, Cartao } from "@/types/database";
 
 function Modal({ titulo, fechar, children }: { titulo: string; fechar: () => void; children: React.ReactNode }) {
@@ -129,7 +129,7 @@ export default function RecorrenciasClient() {
   const [recorrencias, setRecorrencias] = useState<Recorrencia[]>([]);
   const [contas, setContas] = useState<Conta[]>([]);
   const [cartoes, setCartoes] = useState<Cartao[]>([]);
-  const [cats, setCats] = useState<CatStore>(CATS_DEFAULT);
+  const [cats, setCats] = useState<CatStore>({ despesa: {}, receita: {} });
   const [carregando, setCarregando] = useState(true);
   const [form, setForm] = useState(false);
   const [editando, setEditando] = useState<Recorrencia | null>(null);
@@ -138,14 +138,27 @@ export default function RecorrenciasClient() {
     if (!workspaceId) return;
     setCarregando(true);
     const supabase = createClient();
-    const [{ data: recs }, { data: cts }, { data: carts }] = await Promise.all([
+    const [{ data: recs }, { data: cts }, { data: carts }, { data: catRows }] = await Promise.all([
       supabase.from("recorrencias").select("*").eq("workspace_id", workspaceId).order("created_at"),
       supabase.from("contas").select("*").eq("workspace_id", workspaceId),
       supabase.from("cartoes").select("*").eq("workspace_id", workspaceId),
+      supabase.from("categorias").select("*").eq("workspace_id", workspaceId).order("ordem"),
     ]);
     setRecorrencias((recs || []) as unknown as Recorrencia[]);
     setContas((cts || []) as unknown as Conta[]);
     setCartoes((carts || []) as unknown as Cartao[]);
+    // Monta a árvore de categorias do Supabase
+    if (catRows && catRows.length > 0) {
+      const tree: CatStore = { despesa: {}, receita: {} };
+      for (const r of catRows as Array<{ tipo: string; cat: string; sub: string | null }>) {
+        const t = r.tipo as "despesa" | "receita";
+        if (!tree[t][r.cat]) tree[t][r.cat] = {};
+        if (r.sub && !(tree[t][r.cat] as Record<string, unknown>)[r.sub]) {
+          (tree[t][r.cat] as Record<string, unknown>)[r.sub] = [];
+        }
+      }
+      setCats(tree);
+    }
     setCarregando(false);
   }, [workspaceId]);
 
