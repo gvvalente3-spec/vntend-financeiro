@@ -1,133 +1,464 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Save, Trash2, Plus, RefreshCw, Shield, Tag, AlertTriangle } from "lucide-react";
+import { Shield, FolderTree, ChevronDown, Plus, Trash2, Pencil, X, LogOut, Tag, Home, Car, Utensils, ShoppingCart, Heart, Plane, Gift, Smartphone, Dumbbell, GraduationCap, PiggyBank, Briefcase, Zap, Coffee, DollarSign, Baby, Wrench, AlertTriangle, Wifi, Droplet, Film, Music, BookOpen, Fuel, ShieldCheck, Bus, Building2, Dog, TrendingUp, Shirt, Pizza, Beer, Receipt, Wallet, Phone, Tv } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
+import { CATS_DEFAULT, type CatStore } from "@/lib/utils";
+import { POSTOS } from "@/lib/missao";
 import type { Perfil } from "@/types/database";
+import { useRouter } from "next/navigation";
 
-// ——— helpers ———
-const inputCls = "rounded-lg px-3 py-2 text-sm outline-none w-full";
-const inputStyle = { background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)" };
-const labelCls = "flex flex-col gap-1 text-xs";
-const labelColor = { color: "var(--text-muted)" };
+const PALETA = ["#2a8a72","#c9952d","#c0492f","#1d5c4f","#3b6ea5","#8a5cb8","#d17b3f","#b8456b","#5a7d3a","#6f7d77"];
 
-const POSTOS = [
-  "Soldado", "Cabo", "3º Sargento", "2º Sargento", "1º Sargento", "Subtenente",
-  "Aspirante a Oficial", "2º Tenente", "1º Tenente", "Capitão",
-  "Major", "Tenente-Coronel", "Coronel",
-  "General de Brigada", "General de Divisão", "General de Exército",
-];
-
-const GLE_CATS = ["nenhuma", "A", "B", "C"];
-
-// Percentuais padrão do EB (podem ser sobrescritos)
-const DEFAULTS: Partial<Perfil> = {
-  habilitacao_pct: 0,
-  adicional_militar_pct: 0,
-  comp_disp_mil_pct: 10,
-  compensacao_organica: false,
-  compensacao_pct: 37.5,
-  gle_categoria: "nenhuma",
-  fusex_pct: 3.5,
-  pensao_pct: 7.5,
-  dependentes: 0,
-  dependentes_pre_escolar: 0,
+const ICONES_MAP: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
+  tag: Tag, casa: Home, carro: Car, comida: Utensils, mercado: ShoppingCart,
+  saude: Heart, viagem: Plane, presente: Gift, fone: Smartphone,
+  academia: Dumbbell, escola: GraduationCap, cofre: PiggyBank, trabalho: Briefcase,
+  energia: Zap, cafe: Coffee, dinheiro: DollarSign, bebe: Baby, ferramenta: Wrench,
+  // Novos ícones
+  wifi: Wifi, agua: Droplet, filme: Film, musica: Music, livro: BookOpen,
+  combustivel: Fuel, seguro: ShieldCheck, onibus: Bus, predio: Building2,
+  pet: Dog, investimento: TrendingUp, roupa: Shirt, pizza: Pizza, bebida: Beer,
+  nota: Receipt, carteira: Wallet, telefone: Phone, tv: Tv,
 };
+const ICONES_KEYS = Object.keys(ICONES_MAP);
 
-interface PerfilForm extends Partial<Perfil> {
-  pnr_ativo?: boolean;
-  pnr_taxa?: number;
+const inputStyle = {
+  background: "var(--surface2)", border: "1px solid var(--border)",
+  color: "var(--text)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 14,
+};
+const labelStyle = { display: "flex", flexDirection: "column" as const, gap: 4, fontSize: 13, color: "var(--text-muted)" };
+
+function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button type="button" onClick={() => onChange(!checked)}
+      className="flex items-center justify-between w-full rounded-xl px-4 py-3 text-sm text-left transition-colors"
+      style={{ background: "var(--surface2)", border: `1px solid ${checked ? "var(--primary)" : "var(--border)"}` }}>
+      <span style={{ color: "var(--text)" }}>{label}</span>
+      <div className="relative w-10 h-5 rounded-full flex-shrink-0 transition-colors" style={{ background: checked ? "var(--primary)" : "var(--border)" }}>
+        <div className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform" style={{ transform: checked ? "translateX(22px)" : "translateX(2px)" }} />
+      </div>
+    </button>
+  );
 }
 
-export default function AjustesClient() {
-  const { workspaceId, loading: wsLoading } = useWorkspace();
-  const supabase = createClient();
+function Secao({ titulo, icone, children }: { titulo: string; icone: React.ReactNode; children: React.ReactNode }) {
+  const [aberto, setAberto] = useState(false);
+  return (
+    <div className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      <button className="flex items-center justify-between w-full px-4 py-3" onClick={() => setAberto(v => !v)}>
+        <div className="flex items-center gap-2 font-semibold text-sm">{icone}{titulo}</div>
+        <ChevronDown size={16} style={{ color: "var(--text-muted)", transform: aberto ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
+      </button>
+      {aberto && <div className="px-4 pb-4 flex flex-col gap-3 border-t" style={{ borderColor: "var(--border)" }}><div className="pt-3" />{children}</div>}
+    </div>
+  );
+}
 
-  const [perfil, setPerfil] = useState<PerfilForm>({ ...DEFAULTS });
-  const [categorias, setCategorias] = useState<{ id: string; nome: string; tipo: string; icone?: string }[]>([]);
+// ——— Perfil Militar ———
+function PerfilMilitar({ workspaceId }: { workspaceId: string }) {
+  const [perfil, setPerfil] = useState<Partial<Perfil>>({});
   const [salvando, setSalvando] = useState(false);
-  const [salvandoCat, setSalvandoCat] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [zerarConfirm, setZerarConfirm] = useState(false);
-  const [zerando, setZerando] = useState(false);
+  const [salvo, setSalvo] = useState(false);
 
-  // Estado para nova categoria
-  const [novaCatNome, setNovaCatNome] = useState("");
-  const [novaCatTipo, setNovaCatTipo] = useState<"despesa" | "receita">("despesa");
-  const [novaCatIcone, setNovaCatIcone] = useState("");
-
-  const carregar = useCallback(async () => {
-    if (!workspaceId) return;
-    const [{ data: p }, { data: cats }] = await Promise.all([
-      supabase.from("perfil").select("*").eq("workspace_id", workspaceId).maybeSingle(),
-      supabase.from("categorias").select("*").eq("workspace_id", workspaceId).order("nome"),
-    ]);
-    if (p) setPerfil({ ...DEFAULTS, ...p } as PerfilForm);
-    if (cats) setCategorias(cats);
+  useEffect(() => {
+    createClient().from("perfil").select("*").eq("workspace_id", workspaceId).single()
+      .then(({ data }) => { if (data) setPerfil(data as unknown as Perfil); });
   }, [workspaceId]);
 
-  useEffect(() => { if (!wsLoading) carregar(); }, [wsLoading, carregar]);
-
-  const flash = (m: string) => { setMsg(m); setTimeout(() => setMsg(null), 2500); };
-
-  // ——— Salvar perfil ———
-  const salvarPerfil = async () => {
-    if (!workspaceId) return;
+  async function salvar() {
     setSalvando(true);
-    const payload = {
-      workspace_id: workspaceId,
-      posto: perfil.posto,
-      soldo_override: perfil.soldo_override || null,
-      habilitacao_pct: Number(perfil.habilitacao_pct) || 0,
-      adicional_militar_pct: Number(perfil.adicional_militar_pct) || 0,
-      comp_disp_mil_pct: Number(perfil.comp_disp_mil_pct) || 0,
-      compensacao_organica: !!perfil.compensacao_organica,
-      compensacao_pct: Number(perfil.compensacao_pct) || 0,
-      gle_categoria: perfil.gle_categoria || "nenhuma",
-      fusex_pct: Number(perfil.fusex_pct) || 0,
-      pensao_pct: Number(perfil.pensao_pct) || 0,
-      dependentes: Number(perfil.dependentes) || 0,
-      dependentes_pre_escolar: Number(perfil.dependentes_pre_escolar) || 0,
-      valor_etapa: Number(perfil.valor_etapa) || null,
-      pnr_ativo: !!perfil.pnr_ativo,
-      pnr_taxa: Number(perfil.pnr_taxa) || 0,
-      cc_receitas_extras: perfil.cc_receitas_extras || [],
-      cc_descontos_extras: perfil.cc_descontos_extras || [],
-    };
-    const { error } = await supabase.from("perfil").upsert(payload, { onConflict: "workspace_id" });
+    await createClient().from("perfil").update(perfil as Record<string, unknown>).eq("workspace_id", workspaceId);
     setSalvando(false);
-    if (error) flash("Erro ao salvar: " + error.message);
-    else flash("✓ Perfil salvo");
-  };
+    setSalvo(true);
+    setTimeout(() => setSalvo(false), 2000);
+  }
 
-  // ——— Categorias ———
-  const salvarCategoria = async () => {
-    if (!workspaceId || !novaCatNome.trim()) return;
-    setSalvandoCat(true);
-    const { error } = await supabase.from("categorias").insert({
-      workspace_id: workspaceId,
-      nome: novaCatNome.trim(),
-      tipo: novaCatTipo,
-      icone: novaCatIcone.trim() || null,
+  function set(campo: string, valor: unknown) {
+    setPerfil(p => ({ ...p, [campo]: valor }));
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <label style={labelStyle}>
+        Posto / graduação
+        <select value={perfil.posto || ""} onChange={e => set("posto", e.target.value)} style={inputStyle}>
+          <option value="">Selecione…</option>
+          {POSTOS.map(x => <option key={x} value={x}>{x}</option>)}
+        </select>
+      </label>
+
+      <div className="flex gap-3">
+        <label style={{ ...labelStyle, flex: 1 }}>OM<input value={perfil.om || ""} onChange={e => set("om", e.target.value)} placeholder="Ex: 1º BIS" style={inputStyle} /></label>
+        <label style={{ ...labelStyle, flex: 1 }}>Cidade<input value={perfil.cidade || ""} onChange={e => set("cidade", e.target.value)} placeholder="Ex: Manaus" style={inputStyle} /></label>
+      </div>
+
+      <label style={labelStyle}>
+        Localidade especial (GLE)
+        <select value={perfil.gle_categoria || "nenhuma"} onChange={e => set("gle_categoria", e.target.value)} style={inputStyle}>
+          <option value="nenhuma">Não faz jus</option>
+          <option value="A">Categoria A (20%)</option>
+          <option value="B">Categoria B (10%)</option>
+        </select>
+      </label>
+
+      <div className="flex gap-3">
+        <label style={{ ...labelStyle, flex: 1 }}>Dependentes<input type="number" min={0} value={perfil.dependentes ?? 0} onChange={e => set("dependentes", Number(e.target.value))} style={inputStyle} /></label>
+        <label style={{ ...labelStyle, flex: 1 }}>Dep. &lt;7 anos<input type="number" min={0} value={perfil.dependentes_pre_escolar ?? 0} onChange={e => set("dependentes_pre_escolar", Number(e.target.value))} style={inputStyle} /></label>
+      </div>
+
+      <Toggle label="Recebo compensação orgânica" checked={!!perfil.compensacao_organica} onChange={v => set("compensacao_organica", v)} />
+      {perfil.compensacao_organica && (
+        <label style={labelStyle}>
+          Percentual da compensação orgânica
+          <div className="flex items-center gap-2">
+            <input type="number" min={0} max={100} step={1} value={perfil.compensacao_pct ?? 20} onChange={e => set("compensacao_pct", Number(e.target.value))} style={{ ...inputStyle, width: 80 }} />
+            <span style={{ color: "var(--text-muted)" }}>%</span>
+          </div>
+        </label>
+      )}
+
+      <Toggle label="Exerço função com gratificação de representação" checked={!!perfil.grat_representacao} onChange={v => set("grat_representacao", v)} />
+
+      <div className="pt-1 border-t" style={{ borderColor: "var(--border)" }}>
+        <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>Parâmetros do contracheque (calibrados jan/fev 2026)</p>
+        <div className="grid grid-cols-2 gap-3">
+          {[
+            { campo: "habilitacao_pct", label: "Adicional habilitação %" },
+            { campo: "adicional_militar_pct", label: "Adicional militar %" },
+            { campo: "comp_disp_mil_pct", label: "Comp. disponib. mil. %" },
+            { campo: "fusex_pct", label: "FuSEx %" },
+            { campo: "pensao_pct", label: "Pensão Militar %" },
+          ].map(({ campo, label }) => (
+            <label key={campo} style={labelStyle}>
+              {label}
+              <input type="number" step={0.5} value={(perfil as Record<string, unknown>)[campo] as number ?? 0}
+                onChange={e => set(campo, Number(e.target.value))} style={inputStyle} />
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div className="pt-1 border-t flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
+        <div>
+          <p className="text-sm font-medium">Valor da etapa de alimentação</p>
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>Auxílio = nº etapas × este valor (R$13,50 desde jul/2025)</p>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="text-sm" style={{ color: "var(--text-muted)" }}>R$</span>
+          <input type="number" step="0.01"
+            value={perfil.valor_etapa ?? 13.5}
+            onChange={e => set("valor_etapa", Number(e.target.value))}
+            className="text-sm font-semibold text-right rounded-lg px-2 py-1 w-20 outline-none"
+            style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)" }} />
+        </div>
+      </div>
+
+      {/* PNR */}
+      <div className="pt-1 border-t flex flex-col gap-2" style={{ borderColor: "var(--border)" }}>
+        <Toggle
+          label="Ocupa Posto de Natureza Real (PNR)"
+          checked={!!((perfil as Record<string, unknown>).pnr_ativo)}
+          onChange={v => set("pnr_ativo", v)}
+        />
+        {(perfil as Record<string, unknown>).pnr_ativo && (
+          <label style={labelStyle}>
+            Taxa PNR mensal (R$)
+            <input type="number" step="0.01" placeholder="Ex: 150.00"
+              value={((perfil as Record<string, unknown>).pnr_taxa as number) ?? ""}
+              onChange={e => set("pnr_taxa", Number(e.target.value))}
+              style={inputStyle} />
+          </label>
+        )}
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+          Quando ativo, a taxa PNR é descontada automaticamente no Simulador de Contracheque.
+        </p>
+      </div>
+
+      <button onClick={salvar} disabled={salvando}
+        className="py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors"
+        style={{ background: salvo ? "#4caf82" : "var(--primary)", color: "#fff" }}>
+        {salvando ? "Salvando…" : salvo ? "Salvo ✓" : "Salvar perfil"}
+      </button>
+    </div>
+  );
+}
+
+// ——— Categorias ———
+function Categorias({ workspaceId }: { workspaceId: string }) {
+  const [tipo, setTipo] = useState<"despesa" | "receita">("despesa");
+  const [cats, setCats] = useState<CatStore>(CATS_DEFAULT);
+  const [catMeta, setCatMeta] = useState<Record<string, { cor: string; icone: string }>>({});
+  const [aberta, setAberta] = useState<string | null>(null);
+  const [renomeando, setRenomeando] = useState<{ cat: string; nome: string } | null>(null);
+  const [novaSubMap, setNovaSubMap] = useState<Record<string, string>>({});
+  const [novaSubsubMap, setNovaSubsubMap] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const supabase = createClient();
+    Promise.all([
+      supabase.from("categorias").select("*").eq("workspace_id", workspaceId).order("ordem"),
+      supabase.from("cat_meta").select("*").eq("workspace_id", workspaceId),
+    ]).then(([{ data: catRows }, { data: metaRows }]) => {
+      if (catRows && catRows.length > 0) {
+        const tree: CatStore = { despesa: {}, receita: {} };
+        for (const r of catRows as Array<{ tipo: string; cat: string; sub: string | null; subsub: string | null }>) {
+          const t = r.tipo as "despesa" | "receita";
+          if (!tree[t][r.cat]) tree[t][r.cat] = {};
+          if (r.sub) {
+            if (!tree[t][r.cat][r.sub]) tree[t][r.cat][r.sub] = [];
+            if (r.subsub) (tree[t][r.cat][r.sub] as string[]).push(r.subsub);
+          }
+        }
+        setCats(tree);
+      }
+      if (metaRows && metaRows.length > 0) {
+        const m: Record<string, { cor: string; icone: string }> = {};
+        for (const r of metaRows as Array<{ chave: string; cor: string; icone: string }>) {
+          m[r.chave] = { cor: r.cor, icone: r.icone };
+        }
+        setCatMeta(m);
+      }
     });
-    setSalvandoCat(false);
-    if (!error) {
-      setNovaCatNome(""); setNovaCatIcone("");
-      carregar();
-      flash("✓ Categoria adicionada");
+  }, [workspaceId]);
+
+  async function salvarMeta(chave: string, cor: string, icone: string) {
+    const supabase = createClient();
+    const novo = { workspace_id: workspaceId, chave, cor, icone };
+    await supabase.from("cat_meta").upsert(novo as Record<string, unknown>, { onConflict: "workspace_id,chave" });
+    setCatMeta(m => ({ ...m, [chave]: { cor, icone } }));
+  }
+
+  async function sincronizar(novaTree: CatStore) {
+    setCats(novaTree);
+    const supabase = createClient();
+    await supabase.from("categorias").delete().eq("workspace_id", workspaceId);
+    const rows: Record<string, unknown>[] = [];
+    let ordem = 0;
+    for (const t of ["despesa", "receita"] as const) {
+      for (const cat of Object.keys(novaTree[t])) {
+        rows.push({ workspace_id: workspaceId, tipo: t, cat, sub: null, subsub: null, ordem: ordem++ });
+        for (const sub of Object.keys(novaTree[t][cat])) {
+          rows.push({ workspace_id: workspaceId, tipo: t, cat, sub, subsub: null, ordem: ordem++ });
+          for (const ss of (novaTree[t][cat][sub] as string[])) {
+            rows.push({ workspace_id: workspaceId, tipo: t, cat, sub, subsub: ss, ordem: ordem++ });
+          }
+        }
+      }
     }
-  };
+    if (rows.length > 0) await supabase.from("categorias").insert(rows);
+  }
 
-  const removerCategoria = async (id: string) => {
-    await supabase.from("categorias").delete().eq("id", id);
-    carregar();
-  };
+  function clone(): CatStore { return JSON.parse(JSON.stringify(cats)); }
 
-  // ——— Zerar app ———
-  const zerarApp = async () => {
-    if (!workspaceId) return;
+  function addCat() {
+    const nome = prompt("Nome da nova categoria:")?.trim();
+    if (!nome) return;
+    const c = clone();
+    if (!c[tipo][nome]) c[tipo][nome] = {};
+    sincronizar(c);
+  }
+
+  function delCat(cat: string) {
+    if (!confirm(`Remover "${cat}" e todas as subcategorias?`)) return;
+    const c = clone();
+    delete c[tipo][cat];
+    sincronizar(c);
+  }
+
+  async function renameCat(oldNome: string, novoNome: string) {
+    if (!novoNome.trim() || novoNome === oldNome) { setRenomeando(null); return; }
+    const c = clone();
+    c[tipo][novoNome] = c[tipo][oldNome];
+    delete c[tipo][oldNome];
+    sincronizar(c);
+    setRenomeando(null);
+
+    // Propaga o novo nome para o histórico — sem isso, lançamentos antigos
+    // ficariam "órfãos" apontando para a categoria com o nome antigo
+    const supabase = createClient();
+    await Promise.all([
+      supabase.from("lancamentos").update({ cat: novoNome } as Record<string, unknown>)
+        .eq("workspace_id", workspaceId).eq("tipo", tipo).eq("cat", oldNome),
+      supabase.from("recorrencias").update({ cat: novoNome } as Record<string, unknown>)
+        .eq("workspace_id", workspaceId).eq("tipo", tipo).eq("cat", oldNome),
+      supabase.from("orcamentos").update({ cat: novoNome } as Record<string, unknown>)
+        .eq("workspace_id", workspaceId).eq("cat", oldNome),
+      supabase.from("cat_meta").update({ chave: novoNome } as Record<string, unknown>)
+        .eq("workspace_id", workspaceId).eq("chave", oldNome),
+    ]);
+  }
+
+  function addSub(cat: string) {
+    const nome = novaSubMap[cat]?.trim();
+    if (!nome) return;
+    const c = clone();
+    if (!c[tipo][cat][nome]) c[tipo][cat][nome] = [];
+    sincronizar(c);
+    setNovaSubMap(m => ({ ...m, [cat]: "" }));
+  }
+
+  function delSub(cat: string, sub: string) {
+    const c = clone();
+    delete c[tipo][cat][sub];
+    sincronizar(c);
+  }
+
+  function addSubsub(cat: string, sub: string) {
+    const key = `${cat}:${sub}`;
+    const nome = novaSubsubMap[key]?.trim();
+    if (!nome) return;
+    const c = clone();
+    if (!(c[tipo][cat][sub] as string[]).includes(nome)) {
+      (c[tipo][cat][sub] as string[]).push(nome);
+    }
+    sincronizar(c);
+    setNovaSubsubMap(m => ({ ...m, [key]: "" }));
+  }
+
+  function delSubsub(cat: string, sub: string, ss: string) {
+    const c = clone();
+    c[tipo][cat][sub] = (c[tipo][cat][sub] as string[]).filter(x => x !== ss);
+    sincronizar(c);
+  }
+
+  const arvore = cats[tipo];
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+        {(["despesa", "receita"] as const).map(t => (
+          <button key={t} onClick={() => { setTipo(t); setAberta(null); }}
+            className="flex-1 py-2 text-sm font-medium transition-colors"
+            style={{ background: tipo === t ? "var(--primary)" : "transparent", color: tipo === t ? "#fff" : "var(--text-muted)" }}>
+            {t === "despesa" ? "Despesas" : "Receitas"}
+          </button>
+        ))}
+      </div>
+
+      {Object.keys(arvore).map(cat => {
+        const estaRenomeando = renomeando?.cat === cat;
+        const subCount = Object.keys(arvore[cat]).length;
+        const chave = `${tipo}:${cat}`;
+        const meta = catMeta[chave] || { cor: PALETA[0], icone: "tag" };
+        const IconeCat = ICONES_MAP[meta.icone] || Tag;
+        return (
+          <div key={cat} className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+            <div className="flex items-center gap-2 px-3 py-2.5 cursor-pointer"
+              style={{ background: "var(--surface2)" }}
+              onClick={() => !estaRenomeando && setAberta(a => a === cat ? null : cat)}>
+              <ChevronDown size={15} style={{ color: "var(--text-muted)", transform: aberta === cat ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
+              <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: meta.cor }}>
+                <IconeCat size={12} color="#fff" />
+              </div>
+              {estaRenomeando ? (
+                <input autoFocus value={renomeando.nome}
+                  onClick={e => e.stopPropagation()}
+                  onChange={e => setRenomeando({ cat, nome: e.target.value })}
+                  onKeyDown={e => { if (e.key === "Enter") renameCat(cat, renomeando.nome); if (e.key === "Escape") setRenomeando(null); e.stopPropagation(); }}
+                  onBlur={() => renameCat(cat, renomeando.nome)}
+                  className="flex-1 text-sm font-semibold outline-none rounded px-1"
+                  style={{ background: "var(--surface)", border: "1px solid var(--primary)", color: "var(--text)" }} />
+              ) : (
+                <span className="flex-1 text-sm font-semibold">{cat}</span>
+              )}
+              <span className="text-xs" style={{ color: "var(--text-muted)" }}>{subCount} sub</span>
+              <button onClick={e => { e.stopPropagation(); setRenomeando({ cat, nome: cat }); }} style={{ color: "var(--text-muted)" }}><Pencil size={13} /></button>
+              <button onClick={e => { e.stopPropagation(); delCat(cat); }} style={{ color: "var(--text-muted)" }}><Trash2 size={13} /></button>
+            </div>
+
+            {aberta === cat && (
+              <div className="px-3 pb-3 flex flex-col gap-2 pt-2">
+                <div className="flex flex-col gap-1.5 pb-2 border-b" style={{ borderColor: "var(--border)" }}>
+                  <p className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>Cor</p>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {PALETA.map(cor => (
+                      <button key={cor} onClick={() => salvarMeta(chave, cor, meta.icone)}
+                        className="w-6 h-6 rounded-full transition-transform"
+                        style={{ background: cor, transform: meta.cor === cor ? "scale(1.25)" : "scale(1)", outline: meta.cor === cor ? `2px solid ${cor}` : "none", outlineOffset: 2 }} />
+                    ))}
+                  </div>
+                  <p className="text-xs font-medium mt-1" style={{ color: "var(--text-muted)" }}>Ícone</p>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {ICONES_KEYS.map(key => {
+                      const Ic = ICONES_MAP[key];
+                      return (
+                        <button key={key} onClick={() => salvarMeta(chave, meta.cor, key)}
+                          className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors"
+                          style={{ background: meta.icone === key ? meta.cor : "var(--surface2)", border: `1px solid ${meta.icone === key ? meta.cor : "var(--border)"}` }}>
+                          <Ic size={14} color={meta.icone === key ? "#fff" : "var(--text-muted)"} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                {Object.keys(arvore[cat]).map(sub => (
+                  <div key={sub}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-medium flex-1" style={{ color: "var(--text-muted)" }}>{sub}</span>
+                      <button onClick={() => delSub(cat, sub)} style={{ color: "var(--text-muted)" }}><Trash2 size={12} /></button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 mb-1.5">
+                      {(arvore[cat][sub] as string[]).map(ss => (
+                        <span key={ss} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs"
+                          style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)" }}>
+                          {ss}
+                          <button onClick={() => delSubsub(cat, sub, ss)} style={{ color: "var(--text-muted)", lineHeight: 0 }}><X size={10} /></button>
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex gap-1">
+                      <input value={novaSubsubMap[`${cat}:${sub}`] || ""} placeholder="+ sub-sub"
+                        onChange={e => setNovaSubsubMap(m => ({ ...m, [`${cat}:${sub}`]: e.target.value }))}
+                        onKeyDown={e => { if (e.key === "Enter") addSubsub(cat, sub); }}
+                        className="text-xs rounded-lg px-2 py-1 flex-1 outline-none"
+                        style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)" }} />
+                      <button onClick={() => addSubsub(cat, sub)}
+                        className="px-2 rounded-lg text-xs"
+                        style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                        <Plus size={12} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <div className="flex gap-1 pt-1 border-t" style={{ borderColor: "var(--border)" }}>
+                  <input value={novaSubMap[cat] || ""} placeholder="Nova subcategoria…"
+                    onChange={e => setNovaSubMap(m => ({ ...m, [cat]: e.target.value }))}
+                    onKeyDown={e => { if (e.key === "Enter") addSub(cat); }}
+                    className="text-xs rounded-lg px-2 py-1.5 flex-1 outline-none"
+                    style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)" }} />
+                  <button onClick={() => addSub(cat)}
+                    className="px-3 rounded-lg text-xs font-medium"
+                    style={{ background: "var(--primary)", color: "#fff" }}>
+                    <Plus size={12} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      <button onClick={addCat}
+        className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
+        style={{ border: "1px dashed var(--border)", color: "var(--text-muted)" }}>
+        <Plus size={15} /> Nova categoria
+      </button>
+    </div>
+  );
+}
+
+// ——— Zerar App ———
+function ZerarApp({ workspaceId }: { workspaceId: string }) {
+  const [confirmando, setConfirmando] = useState(false);
+  const [zerando, setZerando] = useState(false);
+  const [zerado, setZerado] = useState(false);
+
+  async function zerar() {
     setZerando(true);
+    const supabase = createClient();
+    // Apaga todos os dados financeiros, mantém perfil e categorias
     await Promise.all([
       supabase.from("lancamentos").delete().eq("workspace_id", workspaceId),
       supabase.from("contas").delete().eq("workspace_id", workspaceId),
@@ -138,298 +469,99 @@ export default function AjustesClient() {
       supabase.from("contracheques").delete().eq("workspace_id", workspaceId),
     ]);
     setZerando(false);
-    setZerarConfirm(false);
-    flash("✓ Dados apagados (perfil e categorias mantidos)");
-  };
+    setZerado(true);
+    setConfirmando(false);
+    setTimeout(() => setZerado(false), 3000);
+  }
 
-  const set = (field: keyof PerfilForm, value: unknown) =>
-    setPerfil(prev => ({ ...prev, [field]: value }));
-
-  if (wsLoading) return (
-    <div className="flex items-center justify-center h-40" style={{ color: "var(--text-muted)" }}>
-      Carregando…
-    </div>
-  );
-
-  return (
-    <div className="max-w-2xl mx-auto px-4 py-4 flex flex-col gap-4">
-
-      {/* Toast */}
-      {msg && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl text-sm font-medium shadow-lg"
-          style={{ background: "var(--primary)", color: "#fff" }}>
-          {msg}
-        </div>
-      )}
-
-      {/* ——— Perfil Militar ——— */}
-      <div className="rounded-2xl px-5 py-5 flex flex-col gap-4"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-        <div className="flex items-center gap-2">
-          <Shield size={16} style={{ color: "var(--primary)" }} />
-          <p className="text-sm font-semibold">Perfil Militar</p>
-        </div>
-
-        {/* Posto + Soldo */}
-        <div className="grid grid-cols-2 gap-3">
-          <label className={labelCls} style={labelColor}>
-            Posto / Graduação
-            <select value={perfil.posto || ""} onChange={e => set("posto", e.target.value)}
-              className={inputCls} style={inputStyle}>
-              <option value="">Selecione…</option>
-              {POSTOS.map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
-          </label>
-          <label className={labelCls} style={labelColor}>
-            Soldo manual (R$)
-            <input type="number" step="0.01" placeholder="Deixe vazio para usar tabela"
-              value={perfil.soldo_override || ""}
-              onChange={e => set("soldo_override", e.target.value ? Number(e.target.value) : null)}
-              className={inputCls} style={inputStyle} />
-          </label>
-        </div>
-
-        {/* Percentuais de vencimentos */}
-        <p className="text-xs font-medium -mb-2" style={{ color: "var(--text-muted)" }}>Percentuais de vencimentos (%)</p>
-        <div className="grid grid-cols-2 gap-3">
-          <label className={labelCls} style={labelColor}>
-            Habilitação (%)
-            <input type="number" step="0.01" value={perfil.habilitacao_pct ?? ""}
-              onChange={e => set("habilitacao_pct", Number(e.target.value))}
-              className={inputCls} style={inputStyle} />
-          </label>
-          <label className={labelCls} style={labelColor}>
-            Adicional Militar (%)
-            <input type="number" step="0.01" value={perfil.adicional_militar_pct ?? ""}
-              onChange={e => set("adicional_militar_pct", Number(e.target.value))}
-              className={inputCls} style={inputStyle} />
-          </label>
-          <label className={labelCls} style={labelColor}>
-            Comp. Disp. Militar (%)
-            <input type="number" step="0.01" value={perfil.comp_disp_mil_pct ?? ""}
-              onChange={e => set("comp_disp_mil_pct", Number(e.target.value))}
-              className={inputCls} style={inputStyle} />
-          </label>
-          <label className={labelCls} style={labelColor}>
-            GLE — Categoria
-            <select value={perfil.gle_categoria || "nenhuma"} onChange={e => set("gle_categoria", e.target.value)}
-              className={inputCls} style={inputStyle}>
-              {GLE_CATS.map(c => <option key={c} value={c}>{c === "nenhuma" ? "Sem GLE" : `Cat. ${c} (20%)`}</option>)}
-            </select>
-          </label>
-        </div>
-
-        {/* Compensação Orgânica */}
-        <div className="flex flex-col gap-2">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <div className={`w-9 h-5 rounded-full transition-colors flex items-center px-0.5 ${perfil.compensacao_organica ? "bg-green-500" : "bg-gray-400"}`}
-              onClick={() => set("compensacao_organica", !perfil.compensacao_organica)}>
-              <div className={`w-4 h-4 rounded-full bg-white shadow transition-transform ${perfil.compensacao_organica ? "translate-x-4" : "translate-x-0"}`} />
-            </div>
-            <span className="text-xs" style={labelColor}>Ocupa Compensação Orgânica</span>
-          </label>
-          {perfil.compensacao_organica && (
-            <label className={labelCls} style={labelColor}>
-              Percentual de Compensação (%)
-              <input type="number" step="0.01" value={perfil.compensacao_pct ?? ""}
-                onChange={e => set("compensacao_pct", Number(e.target.value))}
-                className={inputCls} style={inputStyle} placeholder="Ex: 37.5" />
-            </label>
-          )}
-        </div>
-
-        {/* Previdência */}
-        <p className="text-xs font-medium -mb-2" style={{ color: "var(--text-muted)" }}>Previdência (%)</p>
-        <div className="grid grid-cols-2 gap-3">
-          <label className={labelCls} style={labelColor}>
-            FuSEx (%)
-            <input type="number" step="0.01" value={perfil.fusex_pct ?? ""}
-              onChange={e => set("fusex_pct", Number(e.target.value))}
-              className={inputCls} style={inputStyle} />
-          </label>
-          <label className={labelCls} style={labelColor}>
-            Pensão Militar (%)
-            <input type="number" step="0.01" value={perfil.pensao_pct ?? ""}
-              onChange={e => set("pensao_pct", Number(e.target.value))}
-              className={inputCls} style={inputStyle} />
-          </label>
-        </div>
-
-        {/* Dependentes */}
-        <p className="text-xs font-medium -mb-2" style={{ color: "var(--text-muted)" }}>Dependentes</p>
-        <div className="grid grid-cols-2 gap-3">
-          <label className={labelCls} style={labelColor}>
-            Dependentes (total)
-            <input type="number" min="0" value={perfil.dependentes ?? 0}
-              onChange={e => set("dependentes", Number(e.target.value))}
-              className={inputCls} style={inputStyle} />
-          </label>
-          <label className={labelCls} style={labelColor}>
-            Dependentes pré-escolares (&lt;7 anos)
-            <input type="number" min="0" value={perfil.dependentes_pre_escolar ?? 0}
-              onChange={e => set("dependentes_pre_escolar", Number(e.target.value))}
-              className={inputCls} style={inputStyle} />
-          </label>
-        </div>
-
-        {/* Etapa */}
-        <label className={labelCls} style={labelColor}>
-          Valor da Etapa diária (R$) — usado em Missões
-          <input type="number" step="0.01" value={perfil.valor_etapa ?? ""}
-            onChange={e => set("valor_etapa", e.target.value ? Number(e.target.value) : null)}
-            className={inputCls} style={inputStyle} placeholder="Ex: 220.00" />
-        </label>
-
-        {/* ——— PNR ——— */}
-        <div className="rounded-xl px-4 py-3 flex flex-col gap-3"
-          style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
-          <p className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>Posto de Natureza Real (PNR)</p>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <div className={`w-9 h-5 rounded-full transition-colors flex items-center px-0.5 ${perfil.pnr_ativo ? "bg-green-500" : "bg-gray-400"}`}
-              onClick={() => set("pnr_ativo", !perfil.pnr_ativo)}>
-              <div className={`w-4 h-4 rounded-full bg-white shadow transition-transform ${perfil.pnr_ativo ? "translate-x-4" : "translate-x-0"}`} />
-            </div>
-            <span className="text-xs" style={labelColor}>Ocupa PNR (desconto de taxa)</span>
-          </label>
-          {perfil.pnr_ativo && (
-            <label className={labelCls} style={labelColor}>
-              Taxa PNR mensal (R$)
-              <input type="number" step="0.01" value={perfil.pnr_taxa ?? ""}
-                onChange={e => set("pnr_taxa", Number(e.target.value))}
-                className={inputCls} style={inputStyle} placeholder="Ex: 150.00" />
-            </label>
-          )}
-          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-            Quando ativo, a taxa PNR é descontada automaticamente no Simulador de Contracheque.
-          </p>
-        </div>
-
-        {/* Botão salvar */}
-        <button onClick={salvarPerfil} disabled={salvando}
-          className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-opacity"
-          style={{ background: "var(--primary)", color: "#fff", opacity: salvando ? 0.6 : 1 }}>
-          <Save size={15} />
-          {salvando ? "Salvando…" : "Salvar perfil"}
-        </button>
+  if (zerado) {
+    return (
+      <div className="flex items-center gap-2 py-3 px-4 rounded-xl text-sm font-medium"
+        style={{ background: "rgba(76,175,130,0.1)", border: "1px solid #4caf82", color: "#4caf82" }}>
+        ✓ App zerado com sucesso! Pode começar a lançar.
       </div>
+    );
+  }
 
-      {/* ——— Categorias ——— */}
-      <div className="rounded-2xl px-5 py-5 flex flex-col gap-4"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-        <div className="flex items-center gap-2">
-          <Tag size={16} style={{ color: "var(--primary)" }} />
-          <p className="text-sm font-semibold">Categorias</p>
-        </div>
-
-        {/* Lista */}
-        <div className="flex flex-col gap-1.5">
-          {categorias.length === 0 && (
-            <p className="text-xs text-center py-2" style={{ color: "var(--text-muted)" }}>Nenhuma categoria cadastrada.</p>
-          )}
-          {categorias.map(cat => (
-            <div key={cat.id} className="flex items-center justify-between px-3 py-2 rounded-lg"
-              style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
-              <div className="flex items-center gap-2">
-                {cat.icone && <span>{cat.icone}</span>}
-                <span className="text-sm">{cat.nome}</span>
-                <span className="text-xs px-1.5 py-0.5 rounded"
-                  style={{
-                    background: cat.tipo === "receita" ? "rgba(76,175,130,0.12)" : "rgba(239,68,68,0.1)",
-                    color: cat.tipo === "receita" ? "var(--primary)" : "var(--danger)"
-                  }}>
-                  {cat.tipo}
-                </span>
-              </div>
-              <button onClick={() => removerCategoria(cat.id)} style={{ color: "var(--danger)" }}>
-                <Trash2 size={14} />
-              </button>
-            </div>
-          ))}
-        </div>
-
-        {/* Nova categoria */}
-        <div className="flex flex-col gap-2 pt-2 border-t" style={{ borderColor: "var(--border)" }}>
-          <p className="text-xs font-medium" style={labelColor}>Nova categoria</p>
-          <div className="grid grid-cols-2 gap-2">
-            <label className={labelCls} style={labelColor}>
-              Nome
-              <input type="text" value={novaCatNome} onChange={e => setNovaCatNome(e.target.value)}
-                placeholder="Ex: Alimentação" className={inputCls} style={inputStyle} />
-            </label>
-            <label className={labelCls} style={labelColor}>
-              Ícone (emoji)
-              <input type="text" value={novaCatIcone} onChange={e => setNovaCatIcone(e.target.value)}
-                placeholder="🍔" className={inputCls} style={inputStyle} />
-            </label>
+  if (confirmando) {
+    return (
+      <div className="flex flex-col gap-3 p-4 rounded-xl" style={{ background: "rgba(192,73,47,0.08)", border: "1px solid var(--danger)" }}>
+        <div className="flex items-start gap-2">
+          <AlertTriangle size={16} style={{ color: "var(--danger)", flexShrink: 0, marginTop: 2 }} />
+          <div>
+            <p className="text-sm font-semibold" style={{ color: "var(--danger)" }}>Tem certeza?</p>
+            <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+              Isso vai apagar permanentemente todos os lançamentos, contas, cartões, investimentos, missões e recorrências. O perfil militar e as categorias serão mantidos.
+            </p>
           </div>
-          <label className={labelCls} style={labelColor}>
-            Tipo
-            <select value={novaCatTipo} onChange={e => setNovaCatTipo(e.target.value as "despesa" | "receita")}
-              className={inputCls} style={inputStyle}>
-              <option value="despesa">Despesa</option>
-              <option value="receita">Receita</option>
-            </select>
-          </label>
-          <button onClick={salvarCategoria} disabled={salvandoCat || !novaCatNome.trim()}
-            className="flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-medium"
-            style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", opacity: !novaCatNome.trim() ? 0.5 : 1 }}>
-            <Plus size={14} />
-            {salvandoCat ? "Adicionando…" : "Adicionar categoria"}
+        </div>
+        <div className="flex gap-2">
+          <button onClick={zerar} disabled={zerando}
+            className="flex-1 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
+            style={{ background: "var(--danger)", color: "#fff" }}>
+            {zerando ? "Zerando…" : "Sim, zerar tudo"}
+          </button>
+          <button onClick={() => setConfirmando(false)} disabled={zerando}
+            className="flex-1 py-2.5 rounded-xl text-sm font-medium"
+            style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)" }}>
+            Cancelar
           </button>
         </div>
       </div>
+    );
+  }
 
-      {/* ——— Dados / Zerar App ——— */}
-      <div className="rounded-2xl px-5 py-5 flex flex-col gap-4"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-        <div className="flex items-center gap-2">
-          <AlertTriangle size={16} style={{ color: "var(--danger)" }} />
-          <p className="text-sm font-semibold">Dados</p>
-        </div>
-
-        {!zerarConfirm ? (
-          <div className="flex flex-col gap-2">
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Apaga lançamentos, contas, cartões, investimentos, missões, recorrências e contracheques.
-              O perfil e as categorias são mantidos.
-            </p>
-            <button onClick={() => setZerarConfirm(true)}
-              className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
-              style={{ background: "rgba(239,68,68,0.08)", border: "1px solid var(--danger)", color: "var(--danger)" }}>
-              <Trash2 size={15} />
-              Zerar todos os dados
-            </button>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3 p-3 rounded-xl"
-            style={{ background: "rgba(239,68,68,0.06)", border: "1px solid var(--danger)" }}>
-            <p className="text-sm font-medium" style={{ color: "var(--danger)" }}>
-              ⚠️ Confirmar exclusão de todos os dados?
-            </p>
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>Esta ação não pode ser desfeita.</p>
-            <div className="flex gap-2">
-              <button onClick={() => setZerarConfirm(false)}
-                className="flex-1 py-2 rounded-lg text-sm"
-                style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)" }}>
-                Cancelar
-              </button>
-              <button onClick={zerarApp} disabled={zerando}
-                className="flex-1 py-2 rounded-lg text-sm font-medium"
-                style={{ background: "var(--danger)", color: "#fff", opacity: zerando ? 0.6 : 1 }}>
-                {zerando ? "Apagando…" : "Confirmar"}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Refresh */}
-      <button onClick={carregar} className="flex items-center justify-center gap-1.5 py-2 text-xs rounded-xl"
-        style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
-        <RefreshCw size={12} />
-        Recarregar
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+        Apaga lançamentos, contas, cartões, investimentos, missões e recorrências. Perfil e categorias são mantidos.
+      </p>
+      <button onClick={() => setConfirmando(true)}
+        className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
+        style={{ background: "var(--surface2)", border: "1px solid var(--danger)", color: "var(--danger)" }}>
+        <Trash2 size={15} /> Zerar app
       </button>
+    </div>
+  );
+}
 
+// ——— Componente principal ———
+export default function AjustesClient() {
+  const { workspaceId, loading: wsLoading } = useWorkspace();
+  const router = useRouter();
+
+  async function sair() {
+    await createClient().auth.signOut();
+    router.push("/login");
+    router.refresh();
+  }
+
+  if (wsLoading || !workspaceId) {
+    return <div className="flex items-center justify-center h-40" style={{ color: "var(--text-muted)" }}>Carregando…</div>;
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-4 flex flex-col gap-4">
+      <h2 className="text-lg font-semibold">Ajustes</h2>
+
+      <Secao titulo="Perfil militar" icone={<Shield size={16} style={{ color: "var(--primary-light)" }} />}>
+        <PerfilMilitar workspaceId={workspaceId} />
+      </Secao>
+
+      <Secao titulo="Categorias" icone={<FolderTree size={16} style={{ color: "var(--primary-light)" }} />}>
+        <Categorias workspaceId={workspaceId} />
+      </Secao>
+
+      <Secao titulo="Dados" icone={<AlertTriangle size={16} style={{ color: "var(--danger)" }} />}>
+        <ZerarApp workspaceId={workspaceId} />
+      </Secao>
+
+      {/* Logout */}
+      <button onClick={sair}
+        className="flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-medium mt-2"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--danger)" }}>
+        <LogOut size={16} /> Sair da conta
+      </button>
     </div>
   );
 }
