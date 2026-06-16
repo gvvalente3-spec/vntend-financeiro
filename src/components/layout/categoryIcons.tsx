@@ -6,6 +6,7 @@ import {
   Coffee, Bus, Film, Briefcase, PiggyBank, DollarSign, CreditCard,
   Wallet, TrendingUp, Receipt, Baby, Dog, Wrench, Fuel, ShieldCheck,
   BookOpen, Music, Phone, Tv, Pizza, Beer, Church, HandCoins, Tag,
+  ShoppingCart, Smartphone,
   type LucideIcon,
 } from "lucide-react";
 
@@ -16,6 +17,7 @@ export const ICON_MAP: Record<string, LucideIcon> = {
   Coffee, Bus, Film, Briefcase, PiggyBank, DollarSign, CreditCard,
   Wallet, TrendingUp, Receipt, Baby, Dog, Wrench, Fuel, ShieldCheck,
   BookOpen, Music, Phone, Tv, Pizza, Beer, Church, HandCoins, Tag,
+  ShoppingCart, Smartphone,
 };
 
 // Dicionário de tradução: converte as chaves do AjustesClient para o ICON_MAP da Lucide
@@ -24,11 +26,11 @@ const TRADUCAO_ICONES: Record<string, string> = {
   casa: "Home",
   carro: "Car",
   comida: "Utensils",
-  mercado: "ShoppingBag",
+  mercado: "ShoppingCart",
   saude: "Heart",
   viagem: "Plane",
   presente: "Gift",
-  fone: "Phone",
+  fone: "Smartphone",
   academia: "Dumbbell",
   escola: "GraduationCap",
   cofre: "PiggyBank",
@@ -38,6 +40,25 @@ const TRADUCAO_ICONES: Record<string, string> = {
   dinheiro: "DollarSign",
   bebe: "Baby",
   ferramenta: "Wrench",
+  // Novos ícones
+  wifi: "Wifi",
+  agua: "Droplet",
+  filme: "Film",
+  musica: "Music",
+  livro: "BookOpen",
+  combustivel: "Fuel",
+  seguro: "ShieldCheck",
+  onibus: "Bus",
+  predio: "Building2",
+  pet: "Dog",
+  investimento: "TrendingUp",
+  roupa: "Shirt",
+  pizza: "Pizza",
+  bebida: "Beer",
+  nota: "Receipt",
+  carteira: "Wallet",
+  telefone: "Phone",
+  tv: "Tv",
 };
 
 export const ICON_NAMES = Object.keys(ICON_MAP);
