@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   Plus, Search, X, TrendingUp, TrendingDown,
-  FileText, ChevronLeft, ChevronRight, Pencil, Trash2,
+  FileText, ChevronLeft, ChevronRight, Pencil, Trash2, Upload
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
@@ -11,6 +11,7 @@ import { brl, mesAtual, mesDoLanc, formatData, MESES } from "@/lib/utils";
 import type { Lancamento, Conta, Cartao } from "@/types/database";
 import { iconeDaCategoria, corDaCategoria, type CatMeta } from "@/components/layout/categoryIcons";
 import RegistrarContracheque from "./RegistrarContracheque";
+import ImportarFatura from "./ImportarFatura";
 
 // Tipo da árvore de categorias (tabela "categorias")
 interface CategoriaRow {
@@ -289,6 +290,7 @@ export default function LancamentosClient() {
   const [modalAberto, setModalAberto] = useState(false);
   const [lancamentoEd, setLancamentoEd] = useState<Lancamento | null>(null);
   const [contrachequeAberto, setContrachequeAberto] = useState(false);
+  const [importarAberto, setImportarAberto] = useState(false); // Adicionado controle do modal
   const [searchQuery, setSearchQuery] = useState("");
   const [aba, setAba] = useState<"todos" | "receita" | "despesa">("todos");
 
@@ -337,6 +339,17 @@ export default function LancamentosClient() {
   const totalReceitas = doMes.filter(l => l.tipo === "receita").reduce((s, l) => s + Number(l.valor), 0);
   const totalDespesas = doMes.filter(l => l.tipo === "despesa").reduce((s, l) => s + Number(l.valor), 0);
 
+  // Constrói o objeto de categorias exigido pelo ImportarFatura
+  const catsObj = { receita: {} as Record<string, string[]>, despesa: {} as Record<string, string[]> };
+  categorias.forEach(c => {
+    if (c.tipo === "receita" || c.tipo === "despesa") {
+      if (!catsObj[c.tipo][c.cat]) catsObj[c.tipo][c.cat] = [];
+      if (c.sub && !catsObj[c.tipo][c.cat].includes(c.sub)) {
+        catsObj[c.tipo][c.cat].push(c.sub);
+      }
+    }
+  });
+
   if (wsLoading || carregando) {
     return <div className="flex items-center justify-center h-40" style={{ color: "var(--text-muted)" }}>Carregando…</div>;
   }
@@ -368,17 +381,24 @@ export default function LancamentosClient() {
         </div>
       </div>
 
-      {/* Ações */}
-      <div className="grid grid-cols-2 gap-2">
-        <button onClick={abrirNovo}
-          className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
-          style={{ background: "var(--primary)", color: "#fff" }}>
-          <Plus size={16} /> Novo lançamento
-        </button>
-        <button onClick={() => setContrachequeAberto(true)}
-          className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
+      {/* Ações Atualizadas */}
+      <div className="flex flex-col gap-2">
+        <div className="grid grid-cols-2 gap-2">
+          <button onClick={abrirNovo}
+            className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
+            style={{ background: "var(--primary)", color: "#fff" }}>
+            <Plus size={16} /> Novo lançamento
+          </button>
+          <button onClick={() => setContrachequeAberto(true)}
+            className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
+            style={{ background: "var(--surface2)", color: "var(--text)", border: "1px solid var(--border)" }}>
+            <FileText size={16} /> Contracheque
+          </button>
+        </div>
+        <button onClick={() => setImportarAberto(true)}
+          className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium w-full"
           style={{ background: "var(--surface2)", color: "var(--text)", border: "1px solid var(--border)" }}>
-          <FileText size={16} /> Contracheque
+          <Upload size={16} /> Importar Fatura CSV
         </button>
       </div>
 
@@ -429,6 +449,16 @@ export default function LancamentosClient() {
       )}
       {contrachequeAberto && workspaceId && (
         <RegistrarContracheque workspaceId={workspaceId} fechar={() => setContrachequeAberto(false)} onSalvo={carregar} />
+      )}
+      {importarAberto && workspaceId && (
+        <ImportarFatura
+          workspaceId={workspaceId}
+          cartoes={cartoes}
+          lancamentos={lancamentos}
+          cats={catsObj}
+          fechar={() => setImportarAberto(false)}
+          onSalvo={carregar}
+        />
       )}
     </div>
   );
