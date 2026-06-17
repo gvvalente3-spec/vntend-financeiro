@@ -89,6 +89,7 @@ function ItemLanc({ l, catMeta, onEditar, onDeletar }: {
         <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
           {l.cat}{l.sub ? ` › ${l.sub}` : ""} · {formatData(l.data)}
           {l.parcela_num ? ` · ${l.parcela_num}/${l.parcela_total}` : ""}
+          {l.fiscal ? ` · ${l.fiscal === "pgbl" ? "PGBL" : l.fiscal === "saude" ? "saúde" : "educação"}` : ""}
           {l.cartao_id && !l.pago ? " · em aberto" : ""}
         </p>
       </div>
@@ -125,6 +126,7 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
   const [contaId, setContaId] = useState(lancamento?.conta_id || "");
   const [cartaoId, setCartaoId] = useState(lancamento?.cartao_id || "");
   const [pago, setPago] = useState(lancamento?.pago ?? true);
+  const [fiscal, setFiscal] = useState<"" | "pgbl" | "saude" | "educacao">(lancamento?.fiscal || "");
   const [parcelado, setParcelado] = useState(false);
   const [nParcelas, setNParcelas] = useState(2);
   const [salvando, setSalvando] = useState(false);
@@ -149,7 +151,7 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
         cat, sub: sub || null, subsub: null,
         conta_id: contaId || null,
         cartao_id: tipo === "despesa" ? (cartaoId || null) : null,
-        pago,
+        pago, fiscal: tipo === "despesa" ? fiscal : "",
       } as Record<string, unknown>;
 
       const contaAnterior = lancamento.conta_id;
@@ -191,7 +193,7 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
           conta_id: ehCartao ? null : (contaId || null),
           cartao_id: ehCartao ? cartaoId : null,
           pago: ehCartao ? false : pago,
-          fiscal: "", rec_id: null,
+          fiscal: tipo === "despesa" ? fiscal : "", rec_id: null,
           parcela_num: qtd > 1 ? i + 1 : null,
           parcela_total: qtd > 1 ? qtd : null,
           grupo_parcelamento: grupoId,
@@ -205,6 +207,15 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
         if (contaObj) {
           const delta = tipo === "receita" ? valorNum : -valorNum;
           await supabase.from("contas").update({ saldo: Number(contaObj.saldo) + delta } as Record<string, unknown>).eq("id", contaId);
+        }
+      }
+
+      // Se PGBL, soma no investimento PGBL
+      if (tipo === "despesa" && fiscal === "pgbl") {
+        const { data: pgbl } = await supabase.from("investimentos")
+          .select("id, valor").eq("workspace_id", workspaceId).eq("categoria", "pgbl").limit(1).single() as { data: { id: string; valor: number | null } | null };
+        if (pgbl) {
+          await supabase.from("investimentos").update({ valor: Number(pgbl.valor || 0) + valorNum } as Record<string, unknown>).eq("id", pgbl.id);
         }
       }
     }
@@ -229,7 +240,7 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
         <div className="overflow-y-auto p-4 flex flex-col gap-3" style={{ minHeight: 0, flex: "1 1 auto" }}>
           <div className="grid grid-cols-2 gap-2">
             {(["receita", "despesa"] as const).map(t => (
-              <button key={t} onClick={() => { setTipo(t); setCat(""); setSub(""); setParcelado(false); }}
+              <button key={t} onClick={() => { setTipo(t); setCat(""); setSub(""); setParcelado(false); setFiscal(""); }}
                 className="py-2 rounded-xl text-sm font-medium"
                 style={{
                   background: tipo === t ? (t === "receita" ? "#4caf82" : "var(--danger)") : "var(--surface2)",
@@ -296,6 +307,18 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
               </span>
               Pago / já debitado
             </button>
+          )}
+
+          {/* DEDUÇÃO IR */}
+          {tipo === "despesa" && (
+            <label style={lbl}>Dedução de IR / destino fiscal
+              <select value={fiscal} onChange={e => setFiscal(e.target.value as typeof fiscal)} style={inp}>
+                <option value="">Nenhum</option>
+                <option value="pgbl">Aporte PGBL (deduz IR + vai pro fundo)</option>
+                <option value="saude">Saúde (dedução de IR)</option>
+                <option value="educacao">Educação (dedução de IR)</option>
+              </select>
+            </label>
           )}
 
           {/* PARCELAMENTO */}
