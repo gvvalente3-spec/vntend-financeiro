@@ -125,7 +125,6 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
   const [contaId, setContaId] = useState(lancamento?.conta_id || "");
   const [cartaoId, setCartaoId] = useState(lancamento?.cartao_id || "");
   const [pago, setPago] = useState(lancamento?.pago ?? true);
-  // Parcelamento
   const [parcelado, setParcelado] = useState(false);
   const [nParcelas, setNParcelas] = useState(2);
   const [salvando, setSalvando] = useState(false);
@@ -145,7 +144,6 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
     const supabase = createClient();
 
     if (lancamento?.id) {
-      // Edição simples
       const payload = {
         tipo, valor: valorNum, descricao: descricao || null, data,
         cat, sub: sub || null, subsub: null,
@@ -175,7 +173,6 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
         await supabase.from("contas").update({ saldo: saldoAtual + delta } as Record<string, unknown>).eq("id", contaNova);
       }
     } else {
-      // Inserção nova — com ou sem parcelamento
       const ehCartao = !!cartaoId;
       const qtd = parcelado && nParcelas > 1 ? nParcelas : 1;
       const grupoId = qtd > 1 ? `grp_${Date.now().toString(36)}` : null;
@@ -187,11 +184,9 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
         const dataISO = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
         const descFinal = qtd > 1 ? `${descricao || cat} (${i + 1}/${qtd})` : (descricao || null);
         lancs.push({
-          workspace_id: workspaceId,
-          tipo,
+          workspace_id: workspaceId, tipo,
           valor: qtd > 1 ? valorParcela : valorNum,
-          descricao: descFinal,
-          data: dataISO,
+          descricao: descFinal, data: dataISO,
           cat, sub: sub || null, subsub: null,
           conta_id: ehCartao ? null : (contaId || null),
           cartao_id: ehCartao ? cartaoId : null,
@@ -205,7 +200,6 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
 
       await supabase.from("lancamentos").insert(lancs);
 
-      // Ajusta saldo da conta (só para o primeiro lançamento, valor total)
       if (!ehCartao && contaId && pago) {
         const contaObj = contas.find(c => c.id === contaId);
         if (contaObj) {
@@ -215,9 +209,7 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
       }
     }
 
-    onSalvo();
-    fechar();
-    setSalvando(false);
+    onSalvo(); fechar(); setSalvando(false);
   }
 
   const modoEdicao = !!lancamento;
@@ -226,11 +218,7 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center pb-12 sm:pb-0"
       style={{ background: "rgba(0,0,0,0.5)" }} onClick={fechar}>
       <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col"
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          maxHeight: "85vh",
-        }}
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", maxHeight: "85vh" }}
         onClick={e => e.stopPropagation()}>
 
         <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: "var(--border)" }}>
@@ -257,27 +245,22 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
             <InputValor value={valorCts} onChange={setValorCts} style={inp} autoFocus />
           </label>
 
-          <label style={lbl}>
-            Descrição
-            <input type="text" value={descricao} onChange={e => setDescricao(e.target.value)}
-              placeholder="Ex: Supermercado" style={inp} />
+          <label style={lbl}>Descrição
+            <input type="text" value={descricao} onChange={e => setDescricao(e.target.value)} placeholder="Ex: Supermercado" style={inp} />
           </label>
 
-          <label style={lbl}>
-            Data {parcelado && nParcelas > 1 ? "(1ª parcela)" : ""}
+          <label style={lbl}>Data {parcelado && nParcelas > 1 ? "(1ª parcela)" : ""}
             <input type="date" value={data} onChange={e => setData(e.target.value)} style={inp} />
           </label>
 
           <div className="grid grid-cols-2 gap-2">
-            <label style={lbl}>
-              Categoria
+            <label style={lbl}>Categoria
               <select value={cat} onChange={e => { setCat(e.target.value); setSub(""); }} style={inp}>
                 <option value="">Selecione…</option>
                 {cats1.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </label>
-            <label style={lbl}>
-              Subcategoria
+            <label style={lbl}>Subcategoria
               <select value={sub} onChange={e => setSub(e.target.value)} style={inp} disabled={subs.length === 0}>
                 <option value="">{subs.length === 0 ? "—" : "Opcional"}</option>
                 {subs.map(s => <option key={s} value={s}>{s}</option>)}
@@ -286,8 +269,7 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
           </div>
 
           {tipo === "despesa" && cartoes.length > 0 && (
-            <label style={lbl}>
-              Cartão (opcional)
+            <label style={lbl}>Cartão (opcional)
               <select value={cartaoId} onChange={e => setCartaoId(e.target.value)} style={inp}>
                 <option value="">— Débito / Direto —</option>
                 {cartoes.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
@@ -296,8 +278,7 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
           )}
 
           {!cartaoId && contas.length > 0 && (
-            <label style={lbl}>
-              Conta
+            <label style={lbl}>Conta
               <select value={contaId} onChange={e => setContaId(e.target.value)} style={inp}>
                 <option value="">— Selecione —</option>
                 {contas.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
@@ -317,7 +298,7 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
             </button>
           )}
 
-          {/* ——— PARCELAMENTO (só para nova despesa) ——— */}
+          {/* PARCELAMENTO */}
           {!modoEdicao && tipo === "despesa" && (
             <div className="flex flex-col gap-2">
               <button onClick={() => setParcelado(v => !v)}
@@ -332,13 +313,10 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
 
               {parcelado && (
                 <div className="flex flex-col gap-2 px-3 py-3 rounded-xl" style={{ background: "rgba(42,138,114,0.06)", border: "1px solid rgba(42,138,114,0.2)" }}>
-                  <label style={lbl}>
-                    Número de parcelas
-                    <input
-                      type="number" min={2} max={60} value={nParcelas}
+                  <label style={lbl}>Número de parcelas
+                    <input type="number" min={2} max={60} value={nParcelas}
                       onChange={e => setNParcelas(Math.max(2, Math.min(60, Number(e.target.value) || 2)))}
-                      style={inp}
-                    />
+                      style={inp} />
                   </label>
                   {valorNum > 0 && (
                     <div className="flex items-center justify-between text-xs" style={{ color: "var(--text-muted)" }}>
@@ -359,15 +337,9 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
           <button onClick={salvar} disabled={salvando || !valorCts || !data || !cat}
             className="w-full py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
             style={{ background: "var(--primary)", color: "#fff" }}>
-            {salvando
-              ? "Salvando…"
-              : !cat
-                ? "Escolha uma categoria"
-                : modoEdicao
-                  ? "Salvar alterações"
-                  : parcelado && nParcelas > 1
-                    ? `Criar ${nParcelas} parcelas`
-                    : "Registrar"}
+            {salvando ? "Salvando…" : !cat ? "Escolha uma categoria"
+              : modoEdicao ? "Salvar alterações"
+              : parcelado && nParcelas > 1 ? `Criar ${nParcelas} parcelas` : "Registrar"}
           </button>
         </div>
       </div>
@@ -375,14 +347,20 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
   );
 }
 
-// —— Modal de edição de parcelas em lote ——
+// —— Modal de edição de parcelas em lote (CORRIGIDO) ——
 function ModalEdicaoParcelas({ lancamento, fechar, onSalvo, categorias }: {
-  lancamento: Lancamento & { grupo_parcelamento?: string | null };
+  lancamento: Lancamento;
   fechar: () => void;
   onSalvo: () => void;
   categorias: CategoriaRow[];
 }) {
-  const [modo, setModo] = useState<null | "esta" | "todas" | "futuras">(null);
+  const temGrupo = !!(lancamento.grupo_parcelamento);
+  const eParcela = lancamento.parcela_num !== null && lancamento.parcela_total !== null;
+
+  // Se não tem grupo ou não é parcela, entra direto em modo "esta"
+  const [modo, setModo] = useState<null | "esta" | "todas" | "futuras">(
+    (!eParcela || !temGrupo) ? "esta" : null
+  );
   const [cat, setCat] = useState(lancamento.cat || "");
   const [sub, setSub] = useState(lancamento.sub || "");
   const [descricao, setDescricao] = useState(lancamento.descricao || "");
@@ -391,8 +369,6 @@ function ModalEdicaoParcelas({ lancamento, fechar, onSalvo, categorias }: {
   const catsDoTipo = categorias.filter(c => c.tipo === lancamento.tipo);
   const cats1 = [...new Set(catsDoTipo.map(c => c.cat))].sort();
   const subs = cat ? [...new Set(catsDoTipo.filter(c => c.cat === cat && c.sub).map(c => c.sub as string))].sort() : [];
-
-  const temGrupo = !!(lancamento as Record<string, unknown>).grupo_parcelamento;
 
   async function aplicar() {
     if (!modo) return;
@@ -403,19 +379,15 @@ function ModalEdicaoParcelas({ lancamento, fechar, onSalvo, categorias }: {
     if (modo === "esta" || !temGrupo) {
       await supabase.from("lancamentos").update(upd).eq("id", lancamento.id);
     } else if (modo === "todas") {
-      const grupo = (lancamento as Record<string, unknown>).grupo_parcelamento as string;
-      await supabase.from("lancamentos").update(upd).eq("grupo_parcelamento", grupo);
+      await supabase.from("lancamentos").update(upd).eq("grupo_parcelamento", lancamento.grupo_parcelamento);
     } else if (modo === "futuras") {
-      const grupo = (lancamento as Record<string, unknown>).grupo_parcelamento as string;
       const numAtual = lancamento.parcela_num ?? 0;
       await supabase.from("lancamentos").update(upd)
-        .eq("grupo_parcelamento", grupo)
+        .eq("grupo_parcelamento", lancamento.grupo_parcelamento)
         .gte("parcela_num", numAtual);
     }
 
-    onSalvo();
-    fechar();
-    setSalvando(false);
+    onSalvo(); fechar(); setSalvando(false);
   }
 
   async function excluir() {
@@ -423,24 +395,20 @@ function ModalEdicaoParcelas({ lancamento, fechar, onSalvo, categorias }: {
     if (!confirm("Confirmar exclusão?")) return;
     setSalvando(true);
     const supabase = createClient();
+
     if (modo === "esta" || !temGrupo) {
       await supabase.from("lancamentos").delete().eq("id", lancamento.id);
     } else if (modo === "todas") {
-      const grupo = (lancamento as Record<string, unknown>).grupo_parcelamento as string;
-      await supabase.from("lancamentos").delete().eq("grupo_parcelamento", grupo);
+      await supabase.from("lancamentos").delete().eq("grupo_parcelamento", lancamento.grupo_parcelamento);
     } else if (modo === "futuras") {
-      const grupo = (lancamento as Record<string, unknown>).grupo_parcelamento as string;
       const numAtual = lancamento.parcela_num ?? 0;
       await supabase.from("lancamentos").delete()
-        .eq("grupo_parcelamento", grupo)
+        .eq("grupo_parcelamento", lancamento.grupo_parcelamento)
         .gte("parcela_num", numAtual);
     }
-    onSalvo();
-    fechar();
-    setSalvando(false);
-  }
 
-  const eParcela = lancamento.parcela_num !== null && lancamento.parcela_total !== null;
+    onSalvo(); fechar(); setSalvando(false);
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center pb-12 sm:pb-0"
@@ -451,11 +419,12 @@ function ModalEdicaoParcelas({ lancamento, fechar, onSalvo, categorias }: {
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--border)" }}>
           <div>
             <h3 className="font-semibold">Editar lançamento</h3>
-            {eParcela && <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>Parcela {lancamento.parcela_num}/{lancamento.parcela_total}</p>}
+            {eParcela && <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>Parcela {lancamento.parcela_num}/{lancamento.parcela_total} · {brl(lancamento.valor)}</p>}
           </div>
           <button onClick={fechar} style={{ color: "var(--text-muted)" }}><X size={20} /></button>
         </div>
 
+        {/* Seleção de escopo — só aparece se for parcela com grupo e modo não definido */}
         {eParcela && temGrupo && !modo && (
           <div className="p-5 flex flex-col gap-3">
             <p className="text-sm font-medium">Aplicar alterações a…</p>
@@ -474,9 +443,10 @@ function ModalEdicaoParcelas({ lancamento, fechar, onSalvo, categorias }: {
           </div>
         )}
 
-        {(!eParcela || !temGrupo || modo) && (
+        {/* Formulário de edição — aparece quando modo está definido */}
+        {modo && (
           <div className="overflow-y-auto p-5 flex flex-col gap-3" style={{ minHeight: 0, flex: "1 1 auto" }}>
-            {modo && (
+            {eParcela && temGrupo && (
               <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
                 style={{ background: "rgba(42,138,114,0.08)", border: "1px solid rgba(42,138,114,0.2)", color: "var(--primary)" }}>
                 <Layers size={13} />
@@ -511,7 +481,7 @@ function ModalEdicaoParcelas({ lancamento, fechar, onSalvo, categorias }: {
           </div>
         )}
 
-        {(!eParcela || !temGrupo || modo) && (
+        {modo && (
           <div className="flex gap-2 px-5 pb-5 pt-3 border-t flex-shrink-0" style={{ borderColor: "var(--border)" }}>
             <button onClick={excluir} disabled={salvando}
               className="px-4 py-2.5 rounded-xl text-sm font-medium disabled:opacity-50"
@@ -617,14 +587,12 @@ export default function LancamentosClient() {
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-4 flex flex-col gap-4">
-      {/* Seletor de mês */}
       <div className="flex items-center justify-between rounded-xl px-4 py-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
         <button onClick={() => mudarMes(-1)} style={{ color: "var(--text-muted)" }}><ChevronLeft size={20} /></button>
         <span className="font-medium capitalize text-sm">{labelMes}</span>
         <button onClick={() => mudarMes(1)} style={{ color: "var(--text-muted)" }}><ChevronRight size={20} /></button>
       </div>
 
-      {/* Resumo */}
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded-xl px-4 py-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <div className="flex items-center gap-1.5 mb-1">
@@ -642,7 +610,6 @@ export default function LancamentosClient() {
         </div>
       </div>
 
-      {/* Ações */}
       <div className="flex flex-col gap-2">
         <div className="grid grid-cols-2 gap-2">
           <button onClick={abrirNovo}
@@ -663,7 +630,6 @@ export default function LancamentosClient() {
         </button>
       </div>
 
-      {/* Filtros */}
       <div className="flex gap-1 rounded-xl p-1" style={{ background: "var(--surface2)" }}>
         {([["todos", "Todos"], ["receita", "Receitas"], ["despesa", "Despesas"]] as const).map(([v, label]) => (
           <button key={v} onClick={() => setAba(v)}
@@ -674,7 +640,6 @@ export default function LancamentosClient() {
         ))}
       </div>
 
-      {/* Busca */}
       <div className="flex flex-col gap-1">
         <CampoBusca value={searchQuery} onChange={setSearchQuery} placeholder="Buscar por descrição, categoria, data ou valor…" />
         {ql && (
@@ -685,7 +650,6 @@ export default function LancamentosClient() {
         )}
       </div>
 
-      {/* Lista */}
       <div className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
         {filtrados.length === 0 ? (
           <p className="text-sm text-center py-8" style={{ color: "var(--text-muted)" }}>
@@ -698,36 +662,24 @@ export default function LancamentosClient() {
         )}
       </div>
 
-      {/* Modais */}
       {modalAberto && (
-        <ModalLanc
-          workspaceId={workspaceId!}
+        <ModalLanc workspaceId={workspaceId!}
           contas={contas} cartoes={cartoes} categorias={categorias}
           lancamento={lancamentoEd}
-          fechar={() => setModalAberto(false)}
-          onSalvo={carregar}
-        />
+          fechar={() => setModalAberto(false)} onSalvo={carregar} />
       )}
       {modalParcelasAberto && lancamentoEd && (
         <ModalEdicaoParcelas
           lancamento={lancamentoEd}
           fechar={() => { setModalParcelasAberto(false); setLancamentoEd(null); }}
-          onSalvo={carregar}
-          categorias={categorias}
-        />
+          onSalvo={carregar} categorias={categorias} />
       )}
       {contrachequeAberto && workspaceId && (
         <RegistrarContracheque workspaceId={workspaceId} fechar={() => setContrachequeAberto(false)} onSalvo={carregar} />
       )}
       {importarAberto && workspaceId && (
-        <ImportarFatura
-          workspaceId={workspaceId}
-          cartoes={cartoes}
-          lancamentos={lancamentos}
-          cats={catsObj}
-          fechar={() => setImportarAberto(false)}
-          onSalvo={carregar}
-        />
+        <ImportarFatura workspaceId={workspaceId} cartoes={cartoes} lancamentos={lancamentos}
+          cats={catsObj} fechar={() => setImportarAberto(false)} onSalvo={carregar} />
       )}
     </div>
   );
