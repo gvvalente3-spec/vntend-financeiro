@@ -4,8 +4,35 @@ import { useEffect, useState, useCallback } from "react";
 import { Plus, Pencil, Trash2, Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
-import { brl, mesAtual, MESES, type CatStore } from "@/lib/utils";
+import { brl, mesAtual, MESES } from "@/lib/utils";
+import { iconeDaCategoria, corDaCategoria, type CatMeta } from "@/components/layout/categoryIcons";
 import type { Recorrencia, Conta, Cartao } from "@/types/database";
+
+// Tipo da árvore de categorias (tabela "categorias")
+interface CategoriaRow {
+  id: string; tipo: "despesa" | "receita";
+  cat: string; sub: string | null; subsub: string | null; ordem: number;
+}
+
+// —— InputValor: centavos automáticos ——
+function fmtCts(digits: string): string {
+  const n = parseInt(digits || "0", 10);
+  if (!digits) return "";
+  return (n / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function InputValor({ value, onChange, style, placeholder }: {
+  value: string; onChange: (d: string) => void;
+  style?: React.CSSProperties; placeholder?: string;
+}) {
+  return (
+    <input
+      type="text" inputMode="numeric"
+      value={fmtCts(value)}
+      onChange={e => onChange(e.target.value.replace(/\D/g, "").slice(0, 12))}
+      placeholder={placeholder ?? "0,00"} style={style}
+    />
+  );
+}
 
 function Modal({ titulo, fechar, children }: { titulo: string; fechar: () => void; children: React.ReactNode }) {
   return (
@@ -29,16 +56,18 @@ const inputStyle = {
 };
 const labelStyle = { display: "flex", flexDirection: "column" as const, gap: 4, fontSize: 13, color: "var(--text-muted)" };
 
-function FormRecorrencia({ workspaceId, fechar, onSalvo, inicial, contas, cartoes, cats }: {
+function FormRecorrencia({ workspaceId, fechar, onSalvo, inicial, contas, cartoes, categorias }: {
   workspaceId: string; fechar: () => void; onSalvo: () => void;
-  inicial?: Recorrencia; contas: Conta[]; cartoes: Cartao[]; cats: CatStore;
+  inicial?: Recorrencia; contas: Conta[]; cartoes: Cartao[];
+  categorias: CategoriaRow[];
 }) {
   const modoEdicao = !!inicial;
   const [tipo, setTipo] = useState<"despesa" | "receita">(inicial?.tipo || "despesa");
   const [descricao, setDescricao] = useState(inicial?.descricao || "");
-  const [valor, setValor] = useState(inicial ? String(inicial.valor) : "");
+  const [valorCts, setValorCts] = useState(inicial ? String(Math.round(Number(inicial.valor) * 100)) : "");
   const [dia, setDia] = useState(inicial ? String(inicial.dia) : "");
   const [cat, setCat] = useState(inicial?.cat || "");
+  const [sub, setSub] = useState(inicial?.sub || "");
   const [origem, setOrigem] = useState(() => {
     if (inicial?.cartao_id) return `cartao:${inicial.cartao_id}`;
     if (inicial?.conta_id) return `conta:${inicial.conta_id}`;
@@ -46,18 +75,25 @@ function FormRecorrencia({ workspaceId, fechar, onSalvo, inicial, contas, cartoe
   });
   const [salvando, setSalvando] = useState(false);
 
-  const nivel1 = Object.keys(cats[tipo] || {});
+  const valorNum = parseInt(valorCts || "0", 10) / 100;
+
+  // Categorias filtradas pelo tipo
+  const catsDoTipo = categorias.filter(c => c.tipo === tipo);
+  const cats1 = [...new Set(catsDoTipo.map(c => c.cat))].sort();
+  const subs = cat
+    ? [...new Set(catsDoTipo.filter(c => c.cat === cat && c.sub).map(c => c.sub as string))].sort()
+    : [];
 
   async function salvar() {
-    if (!descricao || !valor) return;
+    if (!descricao || !valorCts) return;
     setSalvando(true);
     const ehCartao = origem.startsWith("cartao:");
     const origemId = origem.split(":")[1] || null;
     const supabase = createClient();
 
     const payload = {
-      tipo, descricao, valor: Number(valor), dia: Number(dia) || 1, cat,
-      sub: null, subsub: null,
+      tipo, descricao, valor: valorNum, dia: Number(dia) || 1, cat,
+      sub: sub || null, subsub: null,
       conta_id: ehCartao ? null : origemId,
       cartao_id: ehCartao ? origemId : null,
     };
@@ -77,12 +113,12 @@ function FormRecorrencia({ workspaceId, fechar, onSalvo, inicial, contas, cartoe
       <div className="flex flex-col gap-1.5">
         <span className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>Tipo</span>
         <div className="flex rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
-          <button onClick={() => { setTipo("despesa"); setCat(""); }}
+          <button onClick={() => { setTipo("despesa"); setCat(""); setSub(""); }}
             className="flex-1 py-2.5 text-sm font-semibold transition-colors"
             style={{ background: tipo === "despesa" ? "var(--danger)" : "transparent", color: tipo === "despesa" ? "#fff" : "var(--text-muted)" }}>
             Despesa
           </button>
-          <button onClick={() => { setTipo("receita"); setCat(""); }}
+          <button onClick={() => { setTipo("receita"); setCat(""); setSub(""); }}
             className="flex-1 py-2.5 text-sm font-semibold transition-colors"
             style={{ background: tipo === "receita" ? "#4caf82" : "transparent", color: tipo === "receita" ? "#fff" : "var(--text-muted)" }}>
             Receita
@@ -93,17 +129,30 @@ function FormRecorrencia({ workspaceId, fechar, onSalvo, inicial, contas, cartoe
       <label style={labelStyle}>Descrição<input value={descricao} onChange={e => setDescricao(e.target.value)} placeholder="Ex: Internet, Netflix…" style={inputStyle} /></label>
 
       <div className="flex gap-3">
-        <label style={{ ...labelStyle, flex: 2 }}>Valor (R$)<input type="number" inputMode="decimal" value={valor} onChange={e => setValor(e.target.value)} placeholder="0,00" style={inputStyle} /></label>
+        <label style={{ ...labelStyle, flex: 2 }}>
+          Valor (R$)
+          <InputValor value={valorCts} onChange={setValorCts} style={inputStyle} />
+        </label>
         <label style={{ ...labelStyle, flex: 1 }}>Dia do mês<input type="number" min={1} max={31} value={dia} onChange={e => setDia(e.target.value)} placeholder="5" style={inputStyle} /></label>
       </div>
 
-      <label style={labelStyle}>
-        Categoria
-        <select value={cat} onChange={e => setCat(e.target.value)} style={inputStyle}>
-          <option value="">Selecione…</option>
-          {nivel1.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-      </label>
+      {/* Categoria + Subcategoria via tabela */}
+      <div className="grid grid-cols-2 gap-2">
+        <label style={labelStyle}>
+          Categoria
+          <select value={cat} onChange={e => { setCat(e.target.value); setSub(""); }} style={inputStyle}>
+            <option value="">Selecione…</option>
+            {cats1.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </label>
+        <label style={labelStyle}>
+          Subcategoria
+          <select value={sub} onChange={e => setSub(e.target.value)} style={inputStyle} disabled={subs.length === 0}>
+            <option value="">{subs.length === 0 ? "—" : "Opcional"}</option>
+            {subs.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </label>
+      </div>
 
       <label style={labelStyle}>
         {tipo === "receita" ? "Destino" : "Pago com"}
@@ -114,7 +163,7 @@ function FormRecorrencia({ workspaceId, fechar, onSalvo, inicial, contas, cartoe
         </select>
       </label>
 
-      <button onClick={salvar} disabled={salvando || !descricao || !valor}
+      <button onClick={salvar} disabled={salvando || !descricao || !valorCts}
         className="py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
         style={{ background: "var(--primary)", color: "#fff" }}>
         {salvando ? "Salvando…" : modoEdicao ? "Salvar alterações" : "Criar recorrência"}
@@ -129,7 +178,8 @@ export default function RecorrenciasClient() {
   const [recorrencias, setRecorrencias] = useState<Recorrencia[]>([]);
   const [contas, setContas] = useState<Conta[]>([]);
   const [cartoes, setCartoes] = useState<Cartao[]>([]);
-  const [cats, setCats] = useState<CatStore>({ despesa: {}, receita: {} });
+  const [categorias, setCategorias] = useState<CategoriaRow[]>([]);
+  const [catMeta, setCatMeta] = useState<CatMeta[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [form, setForm] = useState(false);
   const [editando, setEditando] = useState<Recorrencia | null>(null);
@@ -138,27 +188,18 @@ export default function RecorrenciasClient() {
     if (!workspaceId) return;
     setCarregando(true);
     const supabase = createClient();
-    const [{ data: recs }, { data: cts }, { data: carts }, { data: catRows }] = await Promise.all([
+    const [{ data: recs }, { data: cts }, { data: carts }, { data: catRows }, { data: cm }] = await Promise.all([
       supabase.from("recorrencias").select("*").eq("workspace_id", workspaceId).order("created_at"),
       supabase.from("contas").select("*").eq("workspace_id", workspaceId),
       supabase.from("cartoes").select("*").eq("workspace_id", workspaceId),
       supabase.from("categorias").select("*").eq("workspace_id", workspaceId).order("ordem"),
+      supabase.from("cat_meta").select("*").eq("workspace_id", workspaceId),
     ]);
     setRecorrencias((recs || []) as unknown as Recorrencia[]);
     setContas((cts || []) as unknown as Conta[]);
     setCartoes((carts || []) as unknown as Cartao[]);
-    // Monta a árvore de categorias do Supabase
-    if (catRows && catRows.length > 0) {
-      const tree: CatStore = { despesa: {}, receita: {} };
-      for (const r of catRows as Array<{ tipo: string; cat: string; sub: string | null }>) {
-        const t = r.tipo as "despesa" | "receita";
-        if (!tree[t][r.cat]) tree[t][r.cat] = {};
-        if (r.sub && !(tree[t][r.cat] as Record<string, unknown>)[r.sub]) {
-          (tree[t][r.cat] as Record<string, unknown>)[r.sub] = [];
-        }
-      }
-      setCats(tree);
-    }
+    setCategorias((catRows || []) as unknown as CategoriaRow[]);
+    setCatMeta((cm || []) as unknown as CatMeta[]);
     setCarregando(false);
   }, [workspaceId]);
 
@@ -176,12 +217,10 @@ export default function RecorrenciasClient() {
     const supabase = createClient();
 
     if (jaLancado) {
-      // Desfaz: remove lançamento e tira o mês de postados
       await supabase.from("lancamentos").delete().eq("rec_id", r.id).like("data", `${mes}%`);
       const novosPostados = postados.filter(m => m !== mes);
       await supabase.from("recorrencias").update({ postados: novosPostados } as Record<string, unknown>).eq("id", r.id);
     } else {
-      // Lança
       const data = `${mes}-${String(r.dia || 1).padStart(2, "0")}`;
       const ehCartao = !!r.cartao_id;
       await supabase.from("lancamentos").insert({
@@ -193,7 +232,6 @@ export default function RecorrenciasClient() {
         parcela_num: null, parcela_total: null,
       } as Record<string, unknown>);
 
-      // Ajusta saldo se conta à vista — usa estado local
       if (!ehCartao && r.conta_id) {
         const delta = r.tipo === "receita" ? Number(r.valor) : -Number(r.valor);
         const contaLocal = contas.find(c => c.id === r.conta_id);
@@ -278,18 +316,25 @@ export default function RecorrenciasClient() {
           {recorrencias.map(r => {
             const postados: string[] = Array.isArray(r.postados) ? r.postados : [];
             const lancado = postados.includes(mes);
+            const isRec = r.tipo === "receita";
+            const Icone = iconeDaCategoria(r.cat, catMeta, r.tipo);
+            const cor = isRec ? "#4caf82" : corDaCategoria(r.cat, catMeta, r.tipo);
+
             return (
               <div key={r.id} className="flex items-center gap-3 rounded-xl px-4 py-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-                <div className="w-1 self-stretch rounded-full flex-shrink-0"
-                  style={{ background: r.tipo === "receita" ? "#4caf82" : "var(--danger)" }} />
+                {/* Ícone da categoria */}
+                <span className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+                  style={{ background: `${cor}1a`, color: cor }}>
+                  <Icone size={17} />
+                </span>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{r.descricao}</p>
                   <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
-                    {r.cat ? `${r.cat} · ` : ""}dia {r.dia} · {labelDestino(r)}
+                    {r.cat}{r.sub ? ` › ${r.sub}` : ""} · dia {r.dia} · {labelDestino(r)}
                   </p>
                 </div>
-                <span className="text-sm font-semibold flex-shrink-0" style={{ color: r.tipo === "receita" ? "#4caf82" : "var(--danger)" }}>
-                  {r.tipo === "receita" ? "+" : "−"}{brl(r.valor)}
+                <span className="text-sm font-semibold flex-shrink-0" style={{ color: isRec ? "#4caf82" : "var(--danger)" }}>
+                  {isRec ? "+" : "−"}{brl(r.valor)}
                 </span>
                 <button onClick={() => toggleLancar(r)}
                   className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium flex-shrink-0 transition-colors"
@@ -311,11 +356,11 @@ export default function RecorrenciasClient() {
 
       {form && workspaceId && (
         <FormRecorrencia workspaceId={workspaceId} fechar={() => setForm(false)} onSalvo={carregar}
-          contas={contas} cartoes={cartoes} cats={cats} />
+          contas={contas} cartoes={cartoes} categorias={categorias} />
       )}
       {editando && workspaceId && (
         <FormRecorrencia workspaceId={workspaceId} fechar={() => setEditando(null)} onSalvo={carregar}
-          inicial={editando} contas={contas} cartoes={cartoes} cats={cats} />
+          inicial={editando} contas={contas} cartoes={cartoes} categorias={categorias} />
       )}
     </div>
   );
