@@ -77,7 +77,7 @@ function ItemLanc({ l, catMeta, onEditar, onDeletar }: {
   const isRec = l.tipo === "receita";
   const Icone = iconeDaCategoria(l.cat, catMeta, l.tipo);
   const cor = isRec ? "#4caf82" : corDaCategoria(l.cat, catMeta, l.tipo);
-  
+
   return (
     <div className="flex items-center gap-3 px-4 py-2.5 border-b last:border-0" style={{ borderColor: "var(--border)" }}>
       <span className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
@@ -110,7 +110,7 @@ const inp = {
 };
 const lbl: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "var(--text-muted)" };
 
-// —— Modal de lançamento (com parcelamento) ——
+// —— Modal de lançamento ——
 function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fechar, onSalvo }: {
   workspaceId: string;
   contas: Conta[]; cartoes: Cartao[]; categorias: CategoriaRow[];
@@ -130,6 +130,7 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
   const [parcelado, setParcelado] = useState(false);
   const [nParcelas, setNParcelas] = useState(2);
   const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
 
   const valorNum = parseInt(valorCts || "0", 10) / 100;
   const valorParcela = parcelado && nParcelas > 1 ? valorNum / nParcelas : valorNum;
@@ -142,85 +143,111 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
 
   async function salvar() {
     if (!valorCts || !data || !cat) return;
+    setErro("");
     setSalvando(true);
     const supabase = createClient();
 
-    if (lancamento?.id) {
-      const payload = {
-        tipo, valor: valorNum, descricao: descricao || null, data,
-        cat, sub: sub || null, subsub: null,
-        conta_id: contaId || null,
-        cartao_id: tipo === "despesa" ? (cartaoId || null) : null,
-        pago, fiscal: tipo === "despesa" ? fiscal : "",
-      } as Record<string, unknown>;
-
-      const contaAnterior = lancamento.conta_id;
-      const contaNova = contaId || null;
-      const valorAnterior = Number(lancamento.valor);
-      const tipoAnterior = lancamento.tipo;
-
-      await supabase.from("lancamentos").update(payload).eq("id", lancamento.id);
-
-      if (contaAnterior && lancamento.pago && !lancamento.cartao_id) {
-        const contaObj = contas.find(c => c.id === contaAnterior);
-        if (contaObj) {
-          const reverter = tipoAnterior === "receita" ? -valorAnterior : valorAnterior;
-          await supabase.from("contas").update({ saldo: Number(contaObj.saldo) + reverter } as Record<string, unknown>).eq("id", contaAnterior);
-        }
-      }
-      if (contaNova && pago && !cartaoId) {
-        const { data: contaAtual } = await supabase.from("contas").select("saldo").eq("id", contaNova).single();
-        const saldoAtual = Number((contaAtual as Record<string, unknown>)?.saldo ?? 0);
-        const delta = tipo === "receita" ? valorNum : -valorNum;
-        await supabase.from("contas").update({ saldo: saldoAtual + delta } as Record<string, unknown>).eq("id", contaNova);
-      }
-    } else {
-      const ehCartao = !!cartaoId;
-      const qtd = parcelado && nParcelas > 1 ? nParcelas : 1;
-      const grupoId = qtd > 1 ? `grp_${Date.now().toString(36)}` : null;
-
-      const lancs: Record<string, unknown>[] = [];
-      for (let i = 0; i < qtd; i++) {
-        const d = new Date(data + "T00:00:00");
-        d.setMonth(d.getMonth() + i);
-        const dataISO = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-        const descFinal = qtd > 1 ? `${descricao || cat} (${i + 1}/${qtd})` : (descricao || null);
-        lancs.push({
-          workspace_id: workspaceId, tipo,
-          valor: qtd > 1 ? valorParcela : valorNum,
-          descricao: descFinal, data: dataISO,
+    try {
+      if (lancamento?.id) {
+        // ——— EDIÇÃO ———
+        const payload = {
+          tipo, valor: valorNum, descricao: descricao || null, data,
           cat, sub: sub || null, subsub: null,
-          conta_id: ehCartao ? null : (contaId || null),
-          cartao_id: ehCartao ? cartaoId : null,
-          pago: ehCartao ? false : pago,
-          fiscal: tipo === "despesa" ? fiscal : "", rec_id: null,
-          parcela_num: qtd > 1 ? i + 1 : null,
-          parcela_total: qtd > 1 ? qtd : null,
-          grupo_parcelamento: grupoId,
-        });
-      }
+          conta_id: contaId || null,
+          cartao_id: tipo === "despesa" ? (cartaoId || null) : null,
+          pago, fiscal: tipo === "despesa" ? fiscal : "",
+        } as Record<string, unknown>;
 
-      await supabase.from("lancamentos").insert(lancs);
+        const { error } = await supabase.from("lancamentos").update(payload).eq("id", lancamento.id);
+        if (error) throw error;
 
-      if (!ehCartao && contaId && pago) {
-        const contaObj = contas.find(c => c.id === contaId);
-        if (contaObj) {
+        // Reverter efeito anterior no saldo
+        const contaAnterior = lancamento.conta_id;
+        if (contaAnterior && lancamento.pago && !lancamento.cartao_id) {
+          const contaObj = contas.find(c => c.id === contaAnterior);
+          if (contaObj) {
+            const reverter = lancamento.tipo === "receita" ? -Number(lancamento.valor) : Number(lancamento.valor);
+            await supabase.from("contas").update({ saldo: Number(contaObj.saldo) + reverter } as Record<string, unknown>).eq("id", contaAnterior);
+          }
+        }
+        // Aplicar novo efeito
+        if (contaId && pago && !cartaoId) {
+          const { data: contaAtual } = await supabase.from("contas").select("saldo").eq("id", contaId).single();
+          const saldoAtual = Number((contaAtual as Record<string, unknown>)?.saldo ?? 0);
           const delta = tipo === "receita" ? valorNum : -valorNum;
-          await supabase.from("contas").update({ saldo: Number(contaObj.saldo) + delta } as Record<string, unknown>).eq("id", contaId);
+          await supabase.from("contas").update({ saldo: saldoAtual + delta } as Record<string, unknown>).eq("id", contaId);
+        }
+
+      } else {
+        // ——— INSERÇÃO ———
+        const ehCartao = !!cartaoId;
+        const qtd = parcelado && nParcelas > 1 ? nParcelas : 1;
+
+        // grupo_parcelamento: usa crypto.randomUUID() — formato UUID válido para o Supabase
+        const grupoId = qtd > 1
+          ? (typeof crypto !== "undefined" && crypto.randomUUID
+              ? crypto.randomUUID()
+              : `${Date.now()}-${Math.random().toString(36).slice(2)}`)
+          : null;
+
+        const lancs: Record<string, unknown>[] = [];
+        for (let i = 0; i < qtd; i++) {
+          const d = new Date(data + "T00:00:00");
+          d.setMonth(d.getMonth() + i);
+          const dataISO = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+          const descBase = descricao || cat;
+          const descFinal = qtd > 1 ? `${descBase} (${i + 1}/${qtd})` : (descricao || null);
+
+          lancs.push({
+            workspace_id: workspaceId,
+            tipo,
+            valor: qtd > 1 ? Math.round(valorParcela * 100) / 100 : valorNum,
+            descricao: descFinal,
+            data: dataISO,
+            cat,
+            sub: sub || null,
+            subsub: null,
+            conta_id: ehCartao ? null : (contaId || null),
+            cartao_id: ehCartao ? cartaoId : null,
+            pago: ehCartao ? false : pago,
+            fiscal: tipo === "despesa" ? fiscal : "",
+            rec_id: null,
+            parcela_num: qtd > 1 ? i + 1 : null,
+            parcela_total: qtd > 1 ? qtd : null,
+            grupo_parcelamento: grupoId,
+          });
+        }
+
+        const { error } = await supabase.from("lancamentos").insert(lancs);
+        if (error) throw error;
+
+        // Ajusta saldo da conta (valor total, não por parcela)
+        if (!ehCartao && contaId && pago) {
+          const contaObj = contas.find(c => c.id === contaId);
+          if (contaObj) {
+            const delta = tipo === "receita" ? valorNum : -valorNum;
+            await supabase.from("contas").update({ saldo: Number(contaObj.saldo) + delta } as Record<string, unknown>).eq("id", contaId);
+          }
+        }
+
+        // Auto-soma PGBL
+        if (tipo === "despesa" && fiscal === "pgbl") {
+          const { data: pgbl } = await supabase.from("investimentos")
+            .select("id, valor").eq("workspace_id", workspaceId).eq("categoria", "pgbl").limit(1).single() as { data: { id: string; valor: number | null } | null };
+          if (pgbl) {
+            await supabase.from("investimentos").update({ valor: Number(pgbl.valor || 0) + valorNum } as Record<string, unknown>).eq("id", pgbl.id);
+          }
         }
       }
 
-      // Se PGBL, soma no investimento PGBL
-      if (tipo === "despesa" && fiscal === "pgbl") {
-        const { data: pgbl } = await supabase.from("investimentos")
-          .select("id, valor").eq("workspace_id", workspaceId).eq("categoria", "pgbl").limit(1).single() as { data: { id: string; valor: number | null } | null };
-        if (pgbl) {
-          await supabase.from("investimentos").update({ valor: Number(pgbl.valor || 0) + valorNum } as Record<string, unknown>).eq("id", pgbl.id);
-        }
-      }
+      onSalvo();
+      fechar();
+    } catch (e) {
+      console.error("Erro ao salvar lançamento:", e);
+      setErro("Erro ao salvar. Verifique e tente novamente.");
+    } finally {
+      setSalvando(false);
     }
-
-    onSalvo(); fechar(); setSalvando(false);
   }
 
   const modoEdicao = !!lancamento;
@@ -238,6 +265,8 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
         </div>
 
         <div className="overflow-y-auto p-4 flex flex-col gap-3" style={{ minHeight: 0, flex: "1 1 auto" }}>
+
+          {/* Tipo */}
           <div className="grid grid-cols-2 gap-2">
             {(["receita", "despesa"] as const).map(t => (
               <button key={t} onClick={() => { setTipo(t); setCat(""); setSub(""); setParcelado(false); setFiscal(""); }}
@@ -251,19 +280,24 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
             ))}
           </div>
 
+          {/* Valor */}
           <label style={lbl}>
             {parcelado && nParcelas > 1 ? `Valor total (${nParcelas}x de ${brl(valorParcela)})` : "Valor (R$)"}
             <InputValor value={valorCts} onChange={setValorCts} style={inp} autoFocus />
           </label>
 
+          {/* Descrição */}
           <label style={lbl}>Descrição
             <input type="text" value={descricao} onChange={e => setDescricao(e.target.value)} placeholder="Ex: Supermercado" style={inp} />
           </label>
 
-          <label style={lbl}>Data {parcelado && nParcelas > 1 ? "(1ª parcela)" : ""}
+          {/* Data */}
+          <label style={lbl}>
+            Data{parcelado && nParcelas > 1 ? " (1ª parcela)" : ""}
             <input type="date" value={data} onChange={e => setData(e.target.value)} style={inp} />
           </label>
 
+          {/* Categoria + Sub */}
           <div className="grid grid-cols-2 gap-2">
             <label style={lbl}>Categoria
               <select value={cat} onChange={e => { setCat(e.target.value); setSub(""); }} style={inp}>
@@ -279,6 +313,7 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
             </label>
           </div>
 
+          {/* Cartão */}
           {tipo === "despesa" && cartoes.length > 0 && (
             <label style={lbl}>Cartão (opcional)
               <select value={cartaoId} onChange={e => setCartaoId(e.target.value)} style={inp}>
@@ -288,6 +323,7 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
             </label>
           )}
 
+          {/* Conta */}
           {!cartaoId && contas.length > 0 && (
             <label style={lbl}>Conta
               <select value={contaId} onChange={e => setContaId(e.target.value)} style={inp}>
@@ -297,6 +333,7 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
             </label>
           )}
 
+          {/* Pago */}
           {tipo === "despesa" && !cartaoId && !modoEdicao && (
             <button onClick={() => setPago(v => !v)}
               className="flex items-center gap-2 py-2 px-3 rounded-xl text-sm"
@@ -309,7 +346,7 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
             </button>
           )}
 
-          {/* DEDUÇÃO IR */}
+          {/* Dedução IR */}
           {tipo === "despesa" && (
             <label style={lbl}>Dedução de IR / destino fiscal
               <select value={fiscal} onChange={e => setFiscal(e.target.value as typeof fiscal)} style={inp}>
@@ -321,7 +358,7 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
             </label>
           )}
 
-          {/* PARCELAMENTO */}
+          {/* Parcelamento — apenas novas despesas */}
           {!modoEdicao && tipo === "despesa" && (
             <div className="flex flex-col gap-2">
               <button onClick={() => setParcelado(v => !v)}
@@ -354,15 +391,20 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
               )}
             </div>
           )}
+
+          {/* Erro */}
+          {erro && <p className="text-xs px-1" style={{ color: "var(--danger)" }}>{erro}</p>}
         </div>
 
         <div className="flex-shrink-0 px-4 pb-5 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
           <button onClick={salvar} disabled={salvando || !valorCts || !data || !cat}
             className="w-full py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
             style={{ background: "var(--primary)", color: "#fff" }}>
-            {salvando ? "Salvando…" : !cat ? "Escolha uma categoria"
+            {salvando ? "Salvando…"
+              : !cat ? "Escolha uma categoria"
               : modoEdicao ? "Salvar alterações"
-              : parcelado && nParcelas > 1 ? `Criar ${nParcelas} parcelas` : "Registrar"}
+              : parcelado && nParcelas > 1 ? `Criar ${nParcelas} parcelas`
+              : "Registrar"}
           </button>
         </div>
       </div>
@@ -370,17 +412,15 @@ function ModalLanc({ workspaceId, contas, cartoes, categorias, lancamento, fecha
   );
 }
 
-// —— Modal de edição de parcelas em lote (CORRIGIDO) ——
+// —— Modal de edição de parcelas em lote ——
 function ModalEdicaoParcelas({ lancamento, fechar, onSalvo, categorias }: {
   lancamento: Lancamento;
-  fechar: () => void;
-  onSalvo: () => void;
+  fechar: () => void; onSalvo: () => void;
   categorias: CategoriaRow[];
 }) {
-  const temGrupo = !!(lancamento.grupo_parcelamento);
+  const temGrupo = !!lancamento.grupo_parcelamento;
   const eParcela = lancamento.parcela_num !== null && lancamento.parcela_total !== null;
 
-  // Se não tem grupo ou não é parcela, entra direto em modo "esta"
   const [modo, setModo] = useState<null | "esta" | "todas" | "futuras">(
     (!eParcela || !temGrupo) ? "esta" : null
   );
@@ -404,12 +444,10 @@ function ModalEdicaoParcelas({ lancamento, fechar, onSalvo, categorias }: {
     } else if (modo === "todas") {
       await supabase.from("lancamentos").update(upd).eq("grupo_parcelamento", lancamento.grupo_parcelamento);
     } else if (modo === "futuras") {
-      const numAtual = lancamento.parcela_num ?? 0;
       await supabase.from("lancamentos").update(upd)
         .eq("grupo_parcelamento", lancamento.grupo_parcelamento)
-        .gte("parcela_num", numAtual);
+        .gte("parcela_num", lancamento.parcela_num ?? 0);
     }
-
     onSalvo(); fechar(); setSalvando(false);
   }
 
@@ -424,12 +462,10 @@ function ModalEdicaoParcelas({ lancamento, fechar, onSalvo, categorias }: {
     } else if (modo === "todas") {
       await supabase.from("lancamentos").delete().eq("grupo_parcelamento", lancamento.grupo_parcelamento);
     } else if (modo === "futuras") {
-      const numAtual = lancamento.parcela_num ?? 0;
       await supabase.from("lancamentos").delete()
         .eq("grupo_parcelamento", lancamento.grupo_parcelamento)
-        .gte("parcela_num", numAtual);
+        .gte("parcela_num", lancamento.parcela_num ?? 0);
     }
-
     onSalvo(); fechar(); setSalvando(false);
   }
 
@@ -439,6 +475,7 @@ function ModalEdicaoParcelas({ lancamento, fechar, onSalvo, categorias }: {
       <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col overflow-hidden"
         style={{ background: "var(--surface)", border: "1px solid var(--border)", maxHeight: "85vh" }}
         onClick={e => e.stopPropagation()}>
+
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--border)" }}>
           <div>
             <h3 className="font-semibold">Editar lançamento</h3>
@@ -447,7 +484,7 @@ function ModalEdicaoParcelas({ lancamento, fechar, onSalvo, categorias }: {
           <button onClick={fechar} style={{ color: "var(--text-muted)" }}><X size={20} /></button>
         </div>
 
-        {/* Seleção de escopo — só aparece se for parcela com grupo e modo não definido */}
+        {/* Seleção de escopo */}
         {eParcela && temGrupo && !modo && (
           <div className="p-5 flex flex-col gap-3">
             <p className="text-sm font-medium">Aplicar alterações a…</p>
@@ -457,7 +494,7 @@ function ModalEdicaoParcelas({ lancamento, fechar, onSalvo, categorias }: {
               { v: "todas" as const, label: "Todas as parcelas", sub: `Todas as ${lancamento.parcela_total} parcelas` },
             ].map(op => (
               <button key={op.v} onClick={() => setModo(op.v)}
-                className="flex flex-col items-start px-4 py-3 rounded-xl text-left transition-colors"
+                className="flex flex-col items-start px-4 py-3 rounded-xl text-left"
                 style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
                 <span className="text-sm font-medium">{op.label}</span>
                 <span className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>{op.sub}</span>
@@ -466,7 +503,7 @@ function ModalEdicaoParcelas({ lancamento, fechar, onSalvo, categorias }: {
           </div>
         )}
 
-        {/* Formulário de edição — aparece quando modo está definido */}
+        {/* Formulário */}
         {modo && (
           <div className="overflow-y-auto p-5 flex flex-col gap-3" style={{ minHeight: 0, flex: "1 1 auto" }}>
             {eParcela && temGrupo && (
@@ -474,32 +511,32 @@ function ModalEdicaoParcelas({ lancamento, fechar, onSalvo, categorias }: {
                 style={{ background: "rgba(42,138,114,0.08)", border: "1px solid rgba(42,138,114,0.2)", color: "var(--primary)" }}>
                 <Layers size={13} />
                 {modo === "esta" && "Editando só esta parcela"}
-                {modo === "futuras" && `Editando parcelas ${lancamento.parcela_num} a ${lancamento.parcela_total}`}
+                {modo === "futuras" && `Editando da parcela ${lancamento.parcela_num} em diante`}
                 {modo === "todas" && `Editando todas as ${lancamento.parcela_total} parcelas`}
               </div>
             )}
-            <div style={{ fontSize: 13, color: "var(--text-muted)", display: "flex", flexDirection: "column", gap: 4 }}>
+            <label style={{ fontSize: 13, color: "var(--text-muted)", display: "flex", flexDirection: "column", gap: 4 }}>
               Descrição
               <input value={descricao} onChange={e => setDescricao(e.target.value)}
                 style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 14 }} />
-            </div>
+            </label>
             <div className="grid grid-cols-2 gap-2">
-              <div style={{ fontSize: 13, color: "var(--text-muted)", display: "flex", flexDirection: "column", gap: 4 }}>
+              <label style={{ fontSize: 13, color: "var(--text-muted)", display: "flex", flexDirection: "column", gap: 4 }}>
                 Categoria
                 <select value={cat} onChange={e => { setCat(e.target.value); setSub(""); }}
                   style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 14 }}>
                   <option value="">Selecione…</option>
                   {cats1.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
-              </div>
-              <div style={{ fontSize: 13, color: "var(--text-muted)", display: "flex", flexDirection: "column", gap: 4 }}>
+              </label>
+              <label style={{ fontSize: 13, color: "var(--text-muted)", display: "flex", flexDirection: "column", gap: 4 }}>
                 Subcategoria
                 <select value={sub} onChange={e => setSub(e.target.value)} disabled={subs.length === 0}
                   style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 14 }}>
                   <option value="">{subs.length === 0 ? "—" : "Opcional"}</option>
                   {subs.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
-              </div>
+              </label>
             </div>
           </div>
         )}
@@ -610,12 +647,14 @@ export default function LancamentosClient() {
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-4 flex flex-col gap-4">
+      {/* Seletor de mês */}
       <div className="flex items-center justify-between rounded-xl px-4 py-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
         <button onClick={() => mudarMes(-1)} style={{ color: "var(--text-muted)" }}><ChevronLeft size={20} /></button>
         <span className="font-medium capitalize text-sm">{labelMes}</span>
         <button onClick={() => mudarMes(1)} style={{ color: "var(--text-muted)" }}><ChevronRight size={20} /></button>
       </div>
 
+      {/* Resumo */}
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded-xl px-4 py-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <div className="flex items-center gap-1.5 mb-1">
@@ -633,6 +672,7 @@ export default function LancamentosClient() {
         </div>
       </div>
 
+      {/* Ações */}
       <div className="flex flex-col gap-2">
         <div className="grid grid-cols-2 gap-2">
           <button onClick={abrirNovo}
@@ -653,6 +693,7 @@ export default function LancamentosClient() {
         </button>
       </div>
 
+      {/* Filtros */}
       <div className="flex gap-1 rounded-xl p-1" style={{ background: "var(--surface2)" }}>
         {([["todos", "Todos"], ["receita", "Receitas"], ["despesa", "Despesas"]] as const).map(([v, label]) => (
           <button key={v} onClick={() => setAba(v)}
@@ -663,6 +704,7 @@ export default function LancamentosClient() {
         ))}
       </div>
 
+      {/* Busca */}
       <div className="flex flex-col gap-1">
         <CampoBusca value={searchQuery} onChange={setSearchQuery} placeholder="Buscar por descrição, categoria, data ou valor…" />
         {ql && (
@@ -673,6 +715,7 @@ export default function LancamentosClient() {
         )}
       </div>
 
+      {/* Lista */}
       <div className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
         {filtrados.length === 0 ? (
           <p className="text-sm text-center py-8" style={{ color: "var(--text-muted)" }}>
@@ -685,6 +728,7 @@ export default function LancamentosClient() {
         )}
       </div>
 
+      {/* Modais */}
       {modalAberto && (
         <ModalLanc workspaceId={workspaceId!}
           contas={contas} cartoes={cartoes} categorias={categorias}
