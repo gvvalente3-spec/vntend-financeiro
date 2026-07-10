@@ -78,6 +78,11 @@ export type Database = {
         Insert: { id?: string; workspace_id: string; tipo: "despesa" | "receita"; cat: string; sub?: string | null; subsub?: string | null; ordem?: number };
         Update: { cat?: string; sub?: string | null; subsub?: string | null; ordem?: number };
       };
+      pagamentos_fatura: {
+        Row: PagamentoFatura & { workspace_id: string; created_at: string };
+        Insert: Omit<PagamentoFatura, "id"> & { id?: string; workspace_id: string };
+        Update: Partial<PagamentoFatura>;
+      };
     };
     Views: {};
     Functions: {};
@@ -118,6 +123,15 @@ export interface Lancamento {
   parcela_num: number | null;
   parcela_total: number | null;
   grupo_parcelamento: string | null;
+}
+
+export interface PagamentoFatura {
+  id: string;
+  cartao_id: string;
+  conta_id: string | null;
+  valor: number;
+  data_pagamento: string;   // YYYY-MM-DD
+  mes_referencia: string;   // YYYY-MM
 }
 
 export interface Orcamento {
