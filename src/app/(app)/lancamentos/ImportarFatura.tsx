@@ -4,8 +4,14 @@ import { useState } from "react";
 import Papa from "papaparse";
 import { Upload, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { brl, mesDoLanc, CATS_DEFAULT, type CatStore } from "@/lib/utils";
+import { brl, mesDoLanc } from "@/lib/utils";
 import type { Lancamento, Cartao } from "@/types/database";
+
+// Linha da tabela "categorias" (mesma fonte usada pelo formulário manual)
+interface CategoriaRow {
+  id: string; tipo: "despesa" | "receita";
+  cat: string; sub: string | null; subsub: string | null; ordem: number;
+}
 
 interface LinhaCSV {
   incluir: boolean;
@@ -20,11 +26,11 @@ interface LinhaCSV {
 
 const inp = { background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 6, padding: "4px 8px", fontSize: 13, width: "100%" };
 
-export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cats, fechar, onSalvo }: {
+export default function ImportarFatura({ workspaceId, cartoes, lancamentos, categorias, fechar, onSalvo }: {
   workspaceId: string;
   cartoes: Cartao[];
   lancamentos: Lancamento[];
-  cats: CatStore;
+  categorias: CategoriaRow[];
   fechar: () => void;
   onSalvo: () => void;
 }) {
@@ -39,8 +45,8 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cats
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
 
-  const arvoreDespesa = cats.despesa || CATS_DEFAULT.despesa;
-  const nivel1Despesa = Object.keys(arvoreDespesa);
+  const catsDespesa = categorias.filter(c => c.tipo === "despesa");
+  const nivel1Despesa = [...new Set(catsDespesa.map(c => c.cat))].sort();
 
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -221,8 +227,12 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cats
               </div>
               <div className="flex flex-col gap-1">
                 {linhas.map((l, i) => {
-                  const nivel2 = l.cat ? Object.keys(arvoreDespesa[l.cat] || {}) : [];
-                  const nivel3 = l.cat && l.sub ? (arvoreDespesa[l.cat]?.[l.sub] || []) : [];
+                  const nivel2 = l.cat
+                    ? [...new Set(catsDespesa.filter(c => c.cat === l.cat && c.sub).map(c => c.sub as string))].sort()
+                    : [];
+                  const nivel3 = l.cat && l.sub
+                    ? [...new Set(catsDespesa.filter(c => c.cat === l.cat && c.sub === l.sub && c.subsub).map(c => c.subsub as string))].sort()
+                    : [];
                   return (
                     <div key={i} className="rounded-lg px-3 py-2 flex flex-col gap-1.5"
                       style={{ background: l.duplicata ? "rgba(192,73,47,0.06)" : "var(--surface2)", border: `1px solid ${l.duplicata ? "rgba(192,73,47,0.2)" : "var(--border)"}`, opacity: l.incluir ? 1 : 0.5 }}>
