@@ -631,16 +631,6 @@ export default function LancamentosClient() {
   const totalReceitas = doMes.filter(l => l.tipo === "receita").reduce((s, l) => s + Number(l.valor), 0);
   const totalDespesas = doMes.filter(l => l.tipo === "despesa").reduce((s, l) => s + Number(l.valor), 0);
 
-  const catsObj = { receita: {} as Record<string, string[]>, despesa: {} as Record<string, string[]> };
-  categorias.forEach(c => {
-    if (c.tipo === "receita" || c.tipo === "despesa") {
-      if (!catsObj[c.tipo][c.cat]) catsObj[c.tipo][c.cat] = [];
-      if (c.sub && !catsObj[c.tipo][c.cat].includes(c.sub)) {
-        catsObj[c.tipo][c.cat].push(c.sub);
-      }
-    }
-  });
-
   if (wsLoading || carregando) {
     return <div className="flex items-center justify-center h-40" style={{ color: "var(--text-muted)" }}>Carregando…</div>;
   }
@@ -746,7 +736,7 @@ export default function LancamentosClient() {
       )}
       {importarAberto && workspaceId && (
         <ImportarFatura workspaceId={workspaceId} cartoes={cartoes} lancamentos={lancamentos}
-          cats={catsObj} fechar={() => setImportarAberto(false)} onSalvo={carregar} />
+          categorias={categorias} fechar={() => setImportarAberto(false)} onSalvo={carregar} />
       )}
     </div>
   );
