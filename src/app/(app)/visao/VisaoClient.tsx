@@ -335,9 +335,9 @@ export default function VisaoClient() {
   const despesasMes = despesas.reduce((s, l) => s + Number(l.valor), 0);
   const resultadoMes = receitasMes - despesasMes;
 
-  // Disponível real: saldo atual das contas − faturas de cartão em aberto (todas as competências)
+  // Disponível real: saldo atual das contas − faturas de cartão em aberto (apenas do mês selecionado)
   const saldoContas = contas.reduce((s, c) => s + Number(c.saldo || 0), 0);
-  const faturasAbertas = lancamentos
+  const faturasAbertas = doMes
     .filter(l => l.tipo === "despesa" && l.cartao_id && !l.pago)
     .reduce((s, l) => s + Number(l.valor), 0);
   const disponivel = saldoContas - faturasAbertas;
