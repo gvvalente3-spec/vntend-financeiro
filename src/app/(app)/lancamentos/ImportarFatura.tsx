@@ -13,6 +13,8 @@ interface LinhaCSV {
   descricao: string;
   valor: number;
   cat: string;
+  sub: string;
+  subsub: string;
   duplicata: boolean;
 }
 
@@ -37,7 +39,8 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cats
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
 
-  const nivel1Despesa = Object.keys(cats.despesa || CATS_DEFAULT.despesa);
+  const arvoreDespesa = cats.despesa || CATS_DEFAULT.despesa;
+  const nivel1Despesa = Object.keys(arvoreDespesa);
 
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -96,7 +99,7 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cats
         Math.abs(Number(l.valor) - valor) < 0.01 &&
         l.descricao === descricao
       );
-      return { incluir: !duplicata, data, descricao, valor, cat: "", duplicata };
+      return { incluir: !duplicata, data, descricao, valor, cat: "", sub: "", subsub: "", duplicata };
     }).filter(r => r.valor > 0);
     setLinhas(novas);
     setEtapa("revisar");
@@ -114,7 +117,8 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cats
         descricao: l.descricao,
         data: l.data || new Date().toISOString().slice(0, 10),
         cat: l.cat || "",
-        sub: null, subsub: null,
+        sub: l.sub || null,
+        subsub: l.subsub || null,
         conta_id: null,
         cartao_id: cartaoId || null,
         pago: false,
@@ -128,7 +132,12 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cats
   }
 
   function setLinha(i: number, campo: keyof LinhaCSV, valor: unknown) {
-    setLinhas(ls => ls.map((l, idx) => idx === i ? { ...l, [campo]: valor } : l));
+    setLinhas(ls => ls.map((l, idx) => {
+      if (idx !== i) return l;
+      if (campo === "cat") return { ...l, cat: valor as string, sub: "", subsub: "" };
+      if (campo === "sub") return { ...l, sub: valor as string, subsub: "" };
+      return { ...l, [campo]: valor };
+    }));
   }
 
   return (
@@ -211,26 +220,52 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cats
                   className="text-xs" style={{ color: "var(--primary)" }}>marcar todos</button>
               </div>
               <div className="flex flex-col gap-1">
-                {linhas.map((l, i) => (
-                  <div key={i} className="rounded-lg px-3 py-2 flex items-center gap-2"
-                    style={{ background: l.duplicata ? "rgba(192,73,47,0.06)" : "var(--surface2)", border: `1px solid ${l.duplicata ? "rgba(192,73,47,0.2)" : "var(--border)"}`, opacity: l.incluir ? 1 : 0.5 }}>
-                    <input type="checkbox" checked={l.incluir} onChange={e => setLinha(i, "incluir", e.target.checked)} className="flex-shrink-0" />
-                    <span className="text-xs w-20 flex-shrink-0" style={{ color: "var(--text-muted)" }}>{l.data || "—"}</span>
-                    <input value={l.descricao} onChange={e => setLinha(i, "descricao", e.target.value)}
-                      className="flex-1 text-xs outline-none rounded px-1"
-                      style={{ background: "transparent", color: "var(--text)", minWidth: 0 }} />
-                    <input type="number" value={l.valor} onChange={e => setLinha(i, "valor", Number(e.target.value))}
-                      className="text-xs outline-none rounded px-1 w-20 text-right"
-                      style={{ background: "transparent", color: "var(--text)" }} />
-                    <select value={l.cat} onChange={e => setLinha(i, "cat", e.target.value)}
-                      className="text-xs outline-none rounded px-1"
-                      style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", maxWidth: 110 }}>
-                      <option value="">Categoria…</option>
-                      {nivel1Despesa.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                    {l.duplicata && <span className="text-xs flex-shrink-0" style={{ color: "var(--danger)" }}>dup</span>}
-                  </div>
-                ))}
+                {linhas.map((l, i) => {
+                  const nivel2 = l.cat ? Object.keys(arvoreDespesa[l.cat] || {}) : [];
+                  const nivel3 = l.cat && l.sub ? (arvoreDespesa[l.cat]?.[l.sub] || []) : [];
+                  return (
+                    <div key={i} className="rounded-lg px-3 py-2 flex flex-col gap-1.5"
+                      style={{ background: l.duplicata ? "rgba(192,73,47,0.06)" : "var(--surface2)", border: `1px solid ${l.duplicata ? "rgba(192,73,47,0.2)" : "var(--border)"}`, opacity: l.incluir ? 1 : 0.5 }}>
+                      <div className="flex items-center gap-2">
+                        <input type="checkbox" checked={l.incluir} onChange={e => setLinha(i, "incluir", e.target.checked)} className="flex-shrink-0" />
+                        <span className="text-xs w-20 flex-shrink-0" style={{ color: "var(--text-muted)" }}>{l.data || "—"}</span>
+                        <input value={l.descricao} onChange={e => setLinha(i, "descricao", e.target.value)}
+                          className="flex-1 text-xs outline-none rounded px-1"
+                          style={{ background: "transparent", color: "var(--text)", minWidth: 0 }} />
+                        <input type="number" value={l.valor} onChange={e => setLinha(i, "valor", Number(e.target.value))}
+                          className="text-xs outline-none rounded px-1 w-20 text-right"
+                          style={{ background: "transparent", color: "var(--text)" }} />
+                        {l.duplicata && <span className="text-xs flex-shrink-0" style={{ color: "var(--danger)" }}>dup</span>}
+                      </div>
+                      {l.incluir && (
+                        <div className="flex items-center gap-1.5 pl-6 flex-wrap">
+                          <select value={l.cat} onChange={e => setLinha(i, "cat", e.target.value)}
+                            className="text-xs outline-none rounded px-1 py-0.5"
+                            style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", maxWidth: 130 }}>
+                            <option value="">Categoria…</option>
+                            {nivel1Despesa.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                          {nivel2.length > 0 && (
+                            <select value={l.sub} onChange={e => setLinha(i, "sub", e.target.value)}
+                              className="text-xs outline-none rounded px-1 py-0.5"
+                              style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", maxWidth: 130 }}>
+                              <option value="">Subcategoria…</option>
+                              {nivel2.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          )}
+                          {nivel3.length > 0 && (
+                            <select value={l.subsub} onChange={e => setLinha(i, "subsub", e.target.value)}
+                              className="text-xs outline-none rounded px-1 py-0.5"
+                              style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", maxWidth: 130 }}>
+                              <option value="">Sub-sub…</option>
+                              {nivel3.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
