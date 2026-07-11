@@ -333,7 +333,14 @@ export default function VisaoClient() {
   const despesas = doMes.filter(l => l.tipo === "despesa").sort((a, b) => Number(b.valor) - Number(a.valor));
   const receitasMes = receitas.reduce((s, l) => s + Number(l.valor), 0);
   const despesasMes = despesas.reduce((s, l) => s + Number(l.valor), 0);
-  const disponivel = receitasMes - despesasMes;
+  const resultadoMes = receitasMes - despesasMes;
+
+  // Disponível real: saldo atual das contas − faturas de cartão em aberto (todas as competências)
+  const saldoContas = contas.reduce((s, c) => s + Number(c.saldo || 0), 0);
+  const faturasAbertas = lancamentos
+    .filter(l => l.tipo === "despesa" && l.cartao_id && !l.pago)
+    .reduce((s, l) => s + Number(l.valor), 0);
+  const disponivel = saldoContas - faturasAbertas;
 
   // Pizza (sem filtro de busca — mostra totais reais)
   const agrupDespesa: Record<string, number> = {};
@@ -407,11 +414,15 @@ export default function VisaoClient() {
 
       {/* Hero — Disponível */}
       <div className="rounded-2xl px-5 py-5 flex flex-col gap-1" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-        <p className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>Disponível</p>
+        <p className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>Disponível para gastar</p>
         <p className="text-3xl font-bold" style={{ color: disponivel < 0 ? "var(--danger)" : "#4caf82" }}>{brl(disponivel)}</p>
         <div className="flex gap-3 mt-1 flex-wrap">
-          <span className="text-xs" style={{ color: "var(--text-muted)" }}>Receitas <span style={{ color: "#4caf82" }}>{brl(receitasMes)}</span></span>
-          <span className="text-xs" style={{ color: "var(--text-muted)" }}>− Despesas <span style={{ color: despesasMes > 0 ? "var(--danger)" : "var(--text-muted)" }}>{brl(despesasMes)}</span></span>
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>Saldo em contas <span style={{ color: "var(--text)" }}>{brl(saldoContas)}</span></span>
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>− Faturas em aberto <span style={{ color: faturasAbertas > 0 ? "var(--danger)" : "var(--text-muted)" }}>{brl(faturasAbertas)}</span></span>
+        </div>
+        <div className="mt-1 pt-2 border-t flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>Resultado do mês (receitas − despesas)</span>
+          <span className="text-sm font-semibold" style={{ color: resultadoMes < 0 ? "var(--danger)" : "#4caf82" }}>{brl(resultadoMes)}</span>
         </div>
       </div>
 
