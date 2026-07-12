@@ -7,6 +7,13 @@ import { useWorkspace } from "@/hooks/useWorkspace";
 import { brl, mesAtual, MESES } from "@/lib/utils";
 import { iconeDaCategoria, corDaCategoria, type CatMeta } from "@/components/layout/categoryIcons";
 import type { Recorrencia, Conta, Cartao } from "@/types/database";
+import { cacheClear } from "@/lib/cache";
+
+// Primeiro dia do mês seguinte (para filtros de data seguros no servidor)
+function proximoMes(mes: string) {
+  const [y, m] = mes.split("-").map(Number);
+  return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+}
 
 // Tipo da árvore de categorias (tabela "categorias")
 interface CategoriaRow {
@@ -217,7 +224,35 @@ export default function RecorrenciasClient() {
     const supabase = createClient();
 
     if (jaLancado) {
-      await supabase.from("lancamentos").delete().eq("rec_id", r.id).like("data", `${mes}%`);
+      // Busca os lançamentos gerados por esta recorrência no mês
+      // (por intervalo de datas — LIKE não funciona em coluna do tipo date)
+      const { data: gerados } = await supabase.from("lancamentos")
+        .select("id, tipo, valor, conta_id, cartao_id, pago")
+        .eq("rec_id", r.id)
+        .gte("data", `${mes}-01`).lt("data", proximoMes(mes));
+      const itens = (gerados || []) as unknown as {
+        id: string; tipo: "despesa" | "receita"; valor: number;
+        conta_id: string | null; cartao_id: string | null; pago: boolean;
+      }[];
+
+      // Reverte o saldo das contas afetadas (lançamentos pagos em conta)
+      for (const l of itens) {
+        if (l.conta_id && l.pago && !l.cartao_id) {
+          const conta = contas.find(c => c.id === l.conta_id);
+          if (conta) {
+            const reverter = l.tipo === "receita" ? -Number(l.valor) : Number(l.valor);
+            await supabase.from("contas")
+              .update({ saldo: Number(conta.saldo) + reverter } as Record<string, unknown>)
+              .eq("id", l.conta_id);
+          }
+        }
+      }
+
+      // Exclui os lançamentos (some da fatura do cartão, se era em cartão)
+      if (itens.length > 0) {
+        await supabase.from("lancamentos").delete().in("id", itens.map(l => l.id));
+      }
+
       const novosPostados = postados.filter(m => m !== mes);
       await supabase.from("recorrencias").update({ postados: novosPostados } as Record<string, unknown>).eq("id", r.id);
     } else {
@@ -243,6 +278,7 @@ export default function RecorrenciasClient() {
       await supabase.from("recorrencias").update({ postados: novosPostados } as Record<string, unknown>).eq("id", r.id);
     }
 
+    cacheClear(); // Visão e Lançamentos não podem mostrar dados defasados
     carregar();
   }
 
