@@ -11,6 +11,13 @@ import { useWorkspace } from "@/hooks/useWorkspace";
 import { brl, mesAtual, mesDoLanc, formatData, MESES } from "@/lib/utils";
 import type { Lancamento, Conta, Cartao, Orcamento } from "@/types/database";
 import { iconeDaCategoria, corDaCategoria, type CatMeta } from "@/components/layout/categoryIcons";
+import { cacheGet, cacheSet, cacheClear } from "@/lib/cache";
+
+// Primeiro dia do mês seguinte (para filtros de data seguros no servidor)
+function proximoMes(mes: string) {
+  const [y, m] = mes.split("-").map(Number);
+  return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+}
 
 // Tipo da árvore de categorias (tabela "categorias")
 interface CategoriaRow {
@@ -20,7 +27,7 @@ interface CategoriaRow {
 
 const PALETA = ["#2a8a72","#c9952d","#c0492f","#1d5c4f","#3b6ea5","#8a5cb8","#d17b3f","#b8456b","#5a7d3a","#6f7d77"];
 
-// ——— Orçamento: calcula limite efetivo ———
+// ——— Orçamento: calcula limite explícito de um nível exato ———
 function calcLimite(cat: string, sub: string, subsub: string, orcamentos: Orcamento[]) {
   const match = orcamentos.find(o =>
     o.cat === cat &&
@@ -28,6 +35,25 @@ function calcLimite(cat: string, sub: string, subsub: string, orcamentos: Orcame
     (subsub ? o.subsub === subsub : !o.subsub)
   );
   return match ? Number(match.limite) : 0;
+}
+
+// Limite efetivo da subcategoria = limite próprio + soma dos limites das sub-subs
+function limiteEfetivoSub(cat: string, sub: string, orcamentos: Orcamento[]) {
+  const proprio = calcLimite(cat, sub, "", orcamentos);
+  const subsubs = orcamentos
+    .filter(o => o.cat === cat && o.sub === sub && o.subsub)
+    .reduce((s, o) => s + Number(o.limite), 0);
+  return proprio + subsubs;
+}
+
+// Limite efetivo da categoria = limite próprio (verba não alocada em subs)
+// + soma dos limites definidos nas subcategorias e sub-subcategorias
+function limiteEfetivoCat(cat: string, orcamentos: Orcamento[]) {
+  const proprio = calcLimite(cat, "", "", orcamentos);
+  const abaixo = orcamentos
+    .filter(o => o.cat === cat && o.sub)
+    .reduce((s, o) => s + Number(o.limite), 0);
+  return proprio + abaixo;
 }
 
 // ——— Inline: editar limite de orçamento ———
@@ -106,7 +132,7 @@ function OrcamentosPanel({ lancamentos, orcamentos, categorias, catMeta, workspa
   }
 
   // —— Totalizador: previsto vs realizado ——
-  const totalPrevisto = todasCats.reduce((s, cat) => s + calcLimite(cat, "", "", orcamentos), 0);
+  const totalPrevisto = todasCats.reduce((s, cat) => s + limiteEfetivoCat(cat, orcamentos), 0);
   const totalRealizado = todasCats.reduce((s, cat) => s + (tree[cat]?.total || 0), 0);
   const saldoOrc = totalPrevisto - totalRealizado;
 
@@ -126,7 +152,7 @@ function OrcamentosPanel({ lancamentos, orcamentos, categorias, catMeta, workspa
         const catData = tree[cat] || { total: 0, subs: {} };
         const Icone = iconeDaCategoria(cat, catMeta, "despesa");
         const cor = corDaCategoria(cat, catMeta, "despesa") || PALETA[idx % PALETA.length];
-        const lim = calcLimite(cat, "", "", orcamentos);
+        const lim = limiteEfetivoCat(cat, orcamentos);
         const pct = lim > 0 ? Math.min((catData.total / lim) * 100, 100) : 0;
         const estourou = lim > 0 && catData.total > lim;
         const aberta = expandido[cat];
@@ -159,7 +185,7 @@ function OrcamentosPanel({ lancamentos, orcamentos, categorias, catMeta, workspa
 
             {aberta && todasSubs.sort().map(sub => {
               const subTotal = catData.subs[sub] || 0;
-              const limSub = calcLimite(cat, sub, "", orcamentos);
+              const limSub = limiteEfetivoSub(cat, sub, orcamentos);
               const pctSub = limSub > 0 ? Math.min((subTotal / limSub) * 100, 100) : 0;
               return (
                 <div key={sub} className="ml-8 mt-1">
@@ -277,30 +303,70 @@ export default function VisaoClient() {
   const [searchQuery, setSearchQuery] = useState("");
   const [gruposAbertos, setGruposAbertos] = useState<Record<string, boolean>>({});
 
+  const [faturasAbertas, setFaturasAbertas] = useState(0);
+
   const carregar = useCallback(async () => {
     if (!workspaceId) return;
-    setCarregando(true);
+    const chave = `visao:${workspaceId}:${mes}`;
+
+    type DadosVisao = {
+      lancs: Lancamento[]; cts: Conta[]; carts: Cartao[];
+      orcs: Orcamento[]; cat: CategoriaRow[]; cm: CatMeta[];
+      fatAbertas: number;
+    };
+
+    const aplicar = (d: DadosVisao) => {
+      setLancamentos(d.lancs);
+      setContas(d.cts);
+      setCartoes(d.carts);
+      setOrcamentos(d.orcs);
+      setCategorias(d.cat);
+      setCatMeta(d.cm);
+      setFaturasAbertas(d.fatAbertas);
+    };
+
+    // Mostra o último dado conhecido na hora; revalida em segundo plano
+    const emCache = cacheGet<DadosVisao>(chave);
+    if (emCache) { aplicar(emCache); setCarregando(false); }
+    else setCarregando(true);
+
     const supabase = createClient();
-    const [{ data: lancs }, { data: cts }, { data: carts }, { data: orcs }, { data: cat }, { data: cm }] = await Promise.all([
-      supabase.from("lancamentos").select("*").eq("workspace_id", workspaceId).order("data", { ascending: false }),
+    const inicio = `${mes}-01`;
+    const fim = proximoMes(mes);
+    const [{ data: lancs }, { data: cts }, { data: carts }, { data: orcs }, { data: cat }, { data: cm }, { data: abertas }] = await Promise.all([
+      // Só os lançamentos do mês selecionado (antes vinha a história inteira)
+      supabase.from("lancamentos").select("*").eq("workspace_id", workspaceId)
+        .gte("data", inicio).lt("data", fim).order("data", { ascending: false }),
       supabase.from("contas").select("*").eq("workspace_id", workspaceId),
       supabase.from("cartoes").select("*").eq("workspace_id", workspaceId),
       supabase.from("orcamentos").select("*").eq("workspace_id", workspaceId),
       supabase.from("categorias").select("*").eq("workspace_id", workspaceId).order("ordem"),
       supabase.from("cat_meta").select("*").eq("workspace_id", workspaceId),
+      // Faturas em aberto até o fim do mês selecionado (só a coluna valor)
+      supabase.from("lancamentos").select("valor").eq("workspace_id", workspaceId)
+        .eq("tipo", "despesa").eq("pago", false).not("cartao_id", "is", null)
+        .lt("data", fim),
     ]);
-    setLancamentos((lancs || []) as unknown as Lancamento[]);
-    setContas((cts || []) as unknown as Conta[]);
-    setCartoes((carts || []) as unknown as Cartao[]);
-    setOrcamentos((orcs || []) as unknown as Orcamento[]);
-    setCategorias((cat || []) as unknown as CategoriaRow[]);
-    setCatMeta((cm || []) as unknown as CatMeta[]);
+    const dados: DadosVisao = {
+      lancs: (lancs || []) as unknown as Lancamento[],
+      cts: (cts || []) as unknown as Conta[],
+      carts: (carts || []) as unknown as Cartao[],
+      orcs: (orcs || []) as unknown as Orcamento[],
+      cat: (cat || []) as unknown as CategoriaRow[],
+      cm: (cm || []) as unknown as CatMeta[],
+      fatAbertas: ((abertas || []) as unknown as { valor: number }[])
+        .reduce((s, r) => s + Number(r.valor), 0),
+    };
+    cacheSet(chave, dados);
+    aplicar(dados);
     setCarregando(false);
-  }, [workspaceId]);
+  }, [workspaceId, mes]);
 
   useEffect(() => { carregar(); }, [carregar]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (workspaceId) carregar(); }, []);
+
+  // Mutações (ex.: salvar limite de orçamento) invalidam o cache de todas
+  // as páginas antes de recarregar, para nada ficar defasado ao navegar
+  const aoSalvar = useCallback(() => { cacheClear(); carregar(); }, [carregar]);
 
   function mudarMes(delta: number) {
     const [y, m] = mes.split("-").map(Number);
@@ -335,11 +401,9 @@ export default function VisaoClient() {
   const despesasMes = despesas.reduce((s, l) => s + Number(l.valor), 0);
   const resultadoMes = receitasMes - despesasMes;
 
-  // Disponível real: saldo atual das contas − faturas de cartão em aberto (apenas do mês selecionado)
+  // Disponível real: saldo das contas − faturas em aberto até o mês selecionado
+  // (faturasAbertas vem de query dedicada no servidor: atrasadas contam, parcelas futuras não)
   const saldoContas = contas.reduce((s, c) => s + Number(c.saldo || 0), 0);
-  const faturasAbertas = doMes
-    .filter(l => l.tipo === "despesa" && l.cartao_id && !l.pago)
-    .reduce((s, l) => s + Number(l.valor), 0);
   const disponivel = saldoContas - faturasAbertas;
 
   // Pizza (sem filtro de busca — mostra totais reais)
@@ -574,7 +638,7 @@ export default function VisaoClient() {
               categorias={categorias}
               catMeta={catMeta}
               workspaceId={workspaceId}
-              onSalvo={carregar}
+              onSalvo={aoSalvar}
             />
           )}
         </div>
