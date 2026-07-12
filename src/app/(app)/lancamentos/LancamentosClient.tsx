@@ -12,6 +12,13 @@ import type { Lancamento, Conta, Cartao } from "@/types/database";
 import { iconeDaCategoria, corDaCategoria, type CatMeta } from "@/components/layout/categoryIcons";
 import RegistrarContracheque from "./RegistrarContracheque";
 import ImportarFatura from "./ImportarFatura";
+import { cacheGet, cacheSet, cacheClear } from "@/lib/cache";
+
+// Primeiro dia do mês seguinte (para filtros de data seguros no servidor)
+function proximoMes(mes: string) {
+  const [y, m] = mes.split("-").map(Number);
+  return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+}
 
 interface CategoriaRow {
   id: string; tipo: "despesa" | "receita";
@@ -581,28 +588,59 @@ export default function LancamentosClient() {
 
   const carregar = useCallback(async () => {
     if (!workspaceId) return;
-    setCarregando(true);
+    const chave = `lanc:${workspaceId}:${mes}`;
+
+    type DadosLanc = {
+      lancs: Lancamento[]; cts: Conta[]; carts: Cartao[];
+      cat: CategoriaRow[]; cm: CatMeta[];
+    };
+
+    const aplicar = (d: DadosLanc) => {
+      setLancamentos(d.lancs);
+      setContas(d.cts);
+      setCartoes(d.carts);
+      setCategorias(d.cat);
+      setCatMeta(d.cm);
+    };
+
+    // Mostra o último dado conhecido na hora; revalida em segundo plano
+    const emCache = cacheGet<DadosLanc>(chave);
+    if (emCache) { aplicar(emCache); setCarregando(false); }
+    else setCarregando(true);
+
     const supabase = createClient();
     const [{ data: lancs }, { data: cts }, { data: carts }, { data: cat }, { data: cm }] = await Promise.all([
-      supabase.from("lancamentos").select("*").eq("workspace_id", workspaceId).order("data", { ascending: false }),
+      // Só os lançamentos do mês selecionado (antes vinha a história inteira)
+      supabase.from("lancamentos").select("*").eq("workspace_id", workspaceId)
+        .gte("data", `${mes}-01`).lt("data", proximoMes(mes))
+        .order("data", { ascending: false }),
       supabase.from("contas").select("*").eq("workspace_id", workspaceId),
       supabase.from("cartoes").select("*").eq("workspace_id", workspaceId),
       supabase.from("categorias").select("*").eq("workspace_id", workspaceId).order("ordem"),
       supabase.from("cat_meta").select("*").eq("workspace_id", workspaceId),
     ]);
-    setLancamentos((lancs || []) as unknown as Lancamento[]);
-    setContas((cts || []) as unknown as Conta[]);
-    setCartoes((carts || []) as unknown as Cartao[]);
-    setCategorias((cat || []) as unknown as CategoriaRow[]);
-    setCatMeta((cm || []) as unknown as CatMeta[]);
+    const dados: DadosLanc = {
+      lancs: (lancs || []) as unknown as Lancamento[],
+      cts: (cts || []) as unknown as Conta[],
+      carts: (carts || []) as unknown as Cartao[],
+      cat: (cat || []) as unknown as CategoriaRow[],
+      cm: (cm || []) as unknown as CatMeta[],
+    };
+    cacheSet(chave, dados);
+    aplicar(dados);
     setCarregando(false);
-  }, [workspaceId]);
+  }, [workspaceId, mes]);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Mutações invalidam o cache de todas as páginas antes de recarregar,
+  // para a Visão e as Contas não mostrarem dados defasados ao navegar
+  const aoSalvar = useCallback(() => { cacheClear(); carregar(); }, [carregar]);
 
   async function deletar(id: string) {
     if (!confirm("Remover este lançamento?")) return;
     await createClient().from("lancamentos").delete().eq("id", id);
+    cacheClear();
     setLancamentos(l => l.filter(x => x.id !== id));
   }
 
@@ -723,20 +761,20 @@ export default function LancamentosClient() {
         <ModalLanc workspaceId={workspaceId!}
           contas={contas} cartoes={cartoes} categorias={categorias}
           lancamento={lancamentoEd}
-          fechar={() => setModalAberto(false)} onSalvo={carregar} />
+          fechar={() => setModalAberto(false)} onSalvo={aoSalvar} />
       )}
       {modalParcelasAberto && lancamentoEd && (
         <ModalEdicaoParcelas
           lancamento={lancamentoEd}
           fechar={() => { setModalParcelasAberto(false); setLancamentoEd(null); }}
-          onSalvo={carregar} categorias={categorias} />
+          onSalvo={aoSalvar} categorias={categorias} />
       )}
       {contrachequeAberto && workspaceId && (
-        <RegistrarContracheque workspaceId={workspaceId} fechar={() => setContrachequeAberto(false)} onSalvo={carregar} />
+        <RegistrarContracheque workspaceId={workspaceId} fechar={() => setContrachequeAberto(false)} onSalvo={aoSalvar} />
       )}
       {importarAberto && workspaceId && (
         <ImportarFatura workspaceId={workspaceId} cartoes={cartoes} lancamentos={lancamentos}
-          categorias={categorias} fechar={() => setImportarAberto(false)} onSalvo={carregar} />
+          categorias={categorias} fechar={() => setImportarAberto(false)} onSalvo={aoSalvar} />
       )}
     </div>
   );
