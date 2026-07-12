@@ -104,6 +104,7 @@ export interface Cartao {
   nome: string;
   limite: number;
   venc: number;
+  fechamento: number | null; // dia de fechamento da fatura (null = mês-calendário)
 }
 
 export interface Lancamento {
