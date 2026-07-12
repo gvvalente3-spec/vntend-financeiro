@@ -4,14 +4,9 @@ import { useEffect, useState, useCallback } from "react";
 import { Plus, Trash2, Pencil, ChevronDown, Wallet, CreditCard, ChevronLeft, ChevronRight, Check, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
-import { brl, formatData, mesAtual, MESES, mesDoLanc } from "@/lib/utils";
+import { brl, formatData, mesAtual, MESES, mesFatura } from "@/lib/utils";
 import type { Conta, Cartao, Lancamento, PagamentoFatura } from "@/types/database";
-
-// Primeiro dia do mês seguinte (para filtro de datas seguro, sem "31 de fevereiro")
-function proximoMes(mes: string) {
-  const [y, m] = mes.split("-").map(Number);
-  return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
-}
+import { cacheClear } from "@/lib/cache";
 
 const inputStyle = {
   background: "var(--surface2)", border: "1px solid var(--border)",
@@ -86,16 +81,21 @@ function FormCartao({ workspaceId, fechar, onSalvo, inicial }: {
   const [nome, setNome] = useState(inicial?.nome || "");
   const [limite, setLimite] = useState(inicial ? String(inicial.limite) : "");
   const [venc, setVenc] = useState(inicial ? String(inicial.venc) : "");
+  const [fechamento, setFechamento] = useState(inicial?.fechamento ? String(inicial.fechamento) : "");
   const [salvando, setSalvando] = useState(false);
 
   async function salvar() {
     if (!nome) return;
     setSalvando(true);
     const supabase = createClient();
+    const payload = {
+      nome, limite: Number(limite), venc: Number(venc),
+      fechamento: Number(fechamento) || null,
+    };
     if (inicial) {
-      await supabase.from("cartoes").update({ nome, limite: Number(limite), venc: Number(venc) } as Record<string, unknown>).eq("id", inicial.id);
+      await supabase.from("cartoes").update(payload as Record<string, unknown>).eq("id", inicial.id);
     } else {
-      await supabase.from("cartoes").insert({ workspace_id: workspaceId, nome, limite: Number(limite), venc: Number(venc) } as Record<string, unknown>);
+      await supabase.from("cartoes").insert({ workspace_id: workspaceId, ...payload } as Record<string, unknown>);
     }
     onSalvo(); fechar(); setSalvando(false);
   }
@@ -104,7 +104,13 @@ function FormCartao({ workspaceId, fechar, onSalvo, inicial }: {
     <Modal titulo={inicial ? "Editar cartão" : "Novo cartão"} fechar={fechar}>
       <label style={labelStyle}>Nome<input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex: Itaú Visa" style={inputStyle} /></label>
       <label style={labelStyle}>Limite (R$)<input type="number" value={limite} onChange={e => setLimite(e.target.value)} placeholder="0,00" style={inputStyle} /></label>
-      <label style={labelStyle}>Dia do vencimento<input type="number" min={1} max={31} value={venc} onChange={e => setVenc(e.target.value)} placeholder="10" style={inputStyle} /></label>
+      <div className="flex gap-3">
+        <label style={{ ...labelStyle, flex: 1 }}>Dia do fechamento<input type="number" min={1} max={31} value={fechamento} onChange={e => setFechamento(e.target.value)} placeholder="Ex: 3" style={inputStyle} /></label>
+        <label style={{ ...labelStyle, flex: 1 }}>Dia do vencimento<input type="number" min={1} max={31} value={venc} onChange={e => setVenc(e.target.value)} placeholder="10" style={inputStyle} /></label>
+      </div>
+      <p className="text-xs -mt-1" style={{ color: "var(--text-muted)" }}>
+        Compra após o dia do fechamento entra na fatura do mês seguinte. Deixe em branco para agrupar pelo mês da compra.
+      </p>
       <button onClick={salvar} disabled={salvando || !nome}
         className="py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
         style={{ background: "var(--primary)", color: "#fff" }}>
@@ -146,8 +152,8 @@ function FormEditarItem({ lanc, fechar, onSalvo }: {
 }
 
 // ——— Form Pagar Fatura ———
-function FormPagarFatura({ cartao, mes, valorSugerido, contas, workspaceId, fechar, onSalvo }: {
-  cartao: Cartao; mes: string; valorSugerido: number; contas: Conta[];
+function FormPagarFatura({ cartao, mes, valorSugerido, idsAbertos, contas, workspaceId, fechar, onSalvo }: {
+  cartao: Cartao; mes: string; valorSugerido: number; idsAbertos: string[]; contas: Conta[];
   workspaceId: string; fechar: () => void; onSalvo: () => void;
 }) {
   const [contaId, setContaId] = useState(contas[0]?.id || "");
@@ -179,15 +185,14 @@ function FormPagarFatura({ cartao, mes, valorSugerido, contas, workspaceId, fech
       .update({ saldo: Number(conta.saldo) - valorNum } as Record<string, unknown>)
       .eq("id", contaId);
 
-    // 3) Marca os itens da fatura do mês como pagos
-    await supabase.from("lancamentos")
-      .update({ pago: true } as Record<string, unknown>)
-      .eq("workspace_id", workspaceId)
-      .eq("cartao_id", cartao.id)
-      .eq("pago", false)
-      .gte("data", `${mes}-01`)
-      .lt("data", proximoMes(mes));
+    // 3) Marca os itens desta fatura como pagos (por id, respeitando o fechamento)
+    if (idsAbertos.length > 0) {
+      await supabase.from("lancamentos")
+        .update({ pago: true } as Record<string, unknown>)
+        .in("id", idsAbertos);
+    }
 
+    cacheClear();
     onSalvo(); fechar(); setSalvando(false);
   }
 
@@ -256,6 +261,9 @@ export default function ContasClient() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
+  // Mutações invalidam o cache das outras páginas antes de recarregar
+  const aoSalvar = useCallback(() => { cacheClear(); carregar(); }, [carregar]);
+
   function mudarMes(delta: number) {
     const [y, m] = mes.split("-").map(Number);
     const d = new Date(y, m - 1 + delta);
@@ -265,42 +273,49 @@ export default function ContasClient() {
   async function delConta(id: string) {
     if (!confirm("Remover esta conta?")) return;
     await createClient().from("contas").delete().eq("id", id);
+    cacheClear();
     setContas(c => c.filter(x => x.id !== id));
   }
 
   async function delCartao(id: string) {
     if (!confirm("Remover este cartão?")) return;
     await createClient().from("cartoes").delete().eq("id", id);
+    cacheClear();
     setCartoes(c => c.filter(x => x.id !== id));
   }
 
   async function delItem(id: string) {
     if (!confirm("Remover este item da fatura?")) return;
     await createClient().from("lancamentos").delete().eq("id", id);
+    cacheClear();
     setLancamentos(l => l.filter(x => x.id !== id));
   }
 
-  async function toggleFatura(cartaoId: string, pagar: boolean) {
+  // Itens da FATURA do cartão no mês selecionado (respeita o dia de fechamento)
+  const itensMes = (c: Cartao) =>
+    lancamentos.filter(l => l.cartao_id === c.id && mesFatura(l.data, c.fechamento) === mes)
+      .sort((a, b) => a.data < b.data ? 1 : -1);
+
+  async function toggleFatura(c: Cartao, pagar: boolean) {
     const supabase = createClient();
-    const ids = lancamentos
-      .filter(l => l.cartao_id === cartaoId && mesDoLanc(l.data) === mes && l.pago !== pagar)
-      .map(l => l.id);
+    const ids = itensMes(c).filter(l => l.pago !== pagar).map(l => l.id);
     if (!ids.length) return;
     await supabase.from("lancamentos").update({ pago: pagar } as Record<string, unknown>).in("id", ids);
+    cacheClear();
     setLancamentos(prev => prev.map(l => ids.includes(l.id) ? { ...l, pago: pagar } : l));
   }
 
   const pagFaturaDoMes = (cartaoId: string) =>
     pagamentos.filter(p => p.cartao_id === cartaoId && p.mes_referencia === mes);
 
-  async function desfazerPagamento(cartaoId: string) {
-    const pags = pagFaturaDoMes(cartaoId);
+  async function desfazerPagamento(c: Cartao) {
+    const pags = pagFaturaDoMes(c.id);
     if (!pags.length) return;
     if (!confirm("Desfazer o pagamento? O valor será devolvido à conta e a fatura volta a ficar em aberto.")) return;
     const supabase = createClient();
     for (const p of pags) {
       // Devolve o valor à conta de origem (se ela ainda existir)
-      const conta = contas.find(c => c.id === p.conta_id);
+      const conta = contas.find(x => x.id === p.conta_id);
       if (conta) {
         await supabase.from("contas")
           .update({ saldo: Number(conta.saldo) + Number(p.valor) } as Record<string, unknown>)
@@ -308,13 +323,12 @@ export default function ContasClient() {
       }
       await supabase.from("pagamentos_fatura").delete().eq("id", p.id);
     }
-    // Reabre os itens da fatura do mês
-    await supabase.from("lancamentos")
-      .update({ pago: false } as Record<string, unknown>)
-      .eq("workspace_id", workspaceId!)
-      .eq("cartao_id", cartaoId)
-      .gte("data", `${mes}-01`)
-      .lt("data", proximoMes(mes));
+    // Reabre exatamente os itens desta fatura (por id, respeitando o fechamento)
+    const ids = itensMes(c).map(l => l.id);
+    if (ids.length) {
+      await supabase.from("lancamentos").update({ pago: false } as Record<string, unknown>).in("id", ids);
+    }
+    cacheClear();
     carregar();
   }
 
@@ -322,10 +336,6 @@ export default function ContasClient() {
   const labelMes = `${MESES[mesNum - 1]}/${ano}`;
   const saldoTotal = contas.reduce((s, c) => s + Number(c.saldo), 0);
   const contasMap = Object.fromEntries(contas.map(c => [c.id, c.nome]));
-
-  const itensMes = (cartaoId: string) =>
-    lancamentos.filter(l => l.cartao_id === cartaoId && mesDoLanc(l.data) === mes)
-      .sort((a, b) => a.data < b.data ? 1 : -1);
 
   if (wsLoading || carregando) {
     return <div className="flex items-center justify-center h-40" style={{ color: "var(--text-muted)" }}>Carregando…</div>;
@@ -399,7 +409,7 @@ export default function ContasClient() {
       ) : (
         <div className="flex flex-col gap-2">
           {cartoes.map(c => {
-            const itens = itensMes(c.id);
+            const itens = itensMes(c);
             const fatura = itens.reduce((s, l) => s + Number(l.valor), 0);
             const todaoPaga = itens.length > 0 && itens.every(l => l.pago);
             const algumAberto = itens.some(l => !l.pago);
@@ -417,7 +427,7 @@ export default function ContasClient() {
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium">{c.nome}</p>
                     <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                      vence dia {c.venc || "—"} · limite {brl(c.limite)}
+                      {c.fechamento ? `fecha dia ${c.fechamento} · ` : ""}vence dia {c.venc || "—"} · limite {brl(c.limite)}
                     </p>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
@@ -452,14 +462,14 @@ export default function ContasClient() {
                         </button>
                       )}
                       {!algumAberto && pagosDoMes.length > 0 && (
-                        <button onClick={() => desfazerPagamento(c.id)}
+                        <button onClick={() => desfazerPagamento(c)}
                           className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium"
                           style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
                           <X size={12} /> Desfazer pagamento
                         </button>
                       )}
                       {todaoPaga && pagosDoMes.length === 0 && (
-                        <button onClick={() => toggleFatura(c.id, false)}
+                        <button onClick={() => toggleFatura(c, false)}
                           className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium"
                           style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
                           <X size={12} /> Desmarcar
@@ -518,11 +528,11 @@ export default function ContasClient() {
       )}
 
       {/* Modais */}
-      {formConta && workspaceId && <FormConta workspaceId={workspaceId} fechar={() => setFormConta(false)} onSalvo={carregar} />}
-      {editConta && workspaceId && <FormConta workspaceId={workspaceId} fechar={() => setEditConta(null)} onSalvo={carregar} inicial={editConta} />}
-      {formCartao && workspaceId && <FormCartao workspaceId={workspaceId} fechar={() => setFormCartao(false)} onSalvo={carregar} />}
-      {editCartao && workspaceId && <FormCartao workspaceId={workspaceId} fechar={() => setEditCartao(null)} onSalvo={carregar} inicial={editCartao} />}
-      {editItem && <FormEditarItem lanc={editItem} fechar={() => setEditItem(null)} onSalvo={carregar} />}
+      {formConta && workspaceId && <FormConta workspaceId={workspaceId} fechar={() => setFormConta(false)} onSalvo={aoSalvar} />}
+      {editConta && workspaceId && <FormConta workspaceId={workspaceId} fechar={() => setEditConta(null)} onSalvo={aoSalvar} inicial={editConta} />}
+      {formCartao && workspaceId && <FormCartao workspaceId={workspaceId} fechar={() => setFormCartao(false)} onSalvo={aoSalvar} />}
+      {editCartao && workspaceId && <FormCartao workspaceId={workspaceId} fechar={() => setEditCartao(null)} onSalvo={aoSalvar} inicial={editCartao} />}
+      {editItem && <FormEditarItem lanc={editItem} fechar={() => setEditItem(null)} onSalvo={aoSalvar} />}
       {pagarCartao && workspaceId && (
         contas.length === 0
           ? <Modal titulo="Pagar fatura" fechar={() => setPagarCartao(null)}>
@@ -531,11 +541,12 @@ export default function ContasClient() {
           : <FormPagarFatura
               cartao={pagarCartao}
               mes={mes}
-              valorSugerido={itensMes(pagarCartao.id).filter(l => !l.pago).reduce((s, l) => s + Number(l.valor), 0)}
+              valorSugerido={itensMes(pagarCartao).filter(l => !l.pago).reduce((s, l) => s + Number(l.valor), 0)}
+              idsAbertos={itensMes(pagarCartao).filter(l => !l.pago).map(l => l.id)}
               contas={contas}
               workspaceId={workspaceId}
               fechar={() => setPagarCartao(null)}
-              onSalvo={carregar}
+              onSalvo={aoSalvar}
             />
       )}
     </div>
