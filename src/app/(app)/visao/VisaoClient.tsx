@@ -342,10 +342,10 @@ export default function VisaoClient() {
       supabase.from("orcamentos").select("*").eq("workspace_id", workspaceId),
       supabase.from("categorias").select("*").eq("workspace_id", workspaceId).order("ordem"),
       supabase.from("cat_meta").select("*").eq("workspace_id", workspaceId),
-      // Faturas em aberto até o fim do mês selecionado (só a coluna valor)
+      // Faturas em aberto SOMENTE do mês selecionado (só a coluna valor)
       supabase.from("lancamentos").select("valor").eq("workspace_id", workspaceId)
         .eq("tipo", "despesa").eq("pago", false).not("cartao_id", "is", null)
-        .lt("data", fim),
+        .gte("data", inicio).lt("data", fim),
     ]);
     const dados: DadosVisao = {
       lancs: (lancs || []) as unknown as Lancamento[],
@@ -401,8 +401,8 @@ export default function VisaoClient() {
   const despesasMes = despesas.reduce((s, l) => s + Number(l.valor), 0);
   const resultadoMes = receitasMes - despesasMes;
 
-  // Disponível real: saldo das contas − faturas em aberto até o mês selecionado
-  // (faturasAbertas vem de query dedicada no servidor: atrasadas contam, parcelas futuras não)
+  // Disponível real: saldo das contas − faturas em aberto DO MÊS selecionado
+  // (query dedicada no servidor; meses anteriores e parcelas futuras ficam de fora)
   const saldoContas = contas.reduce((s, c) => s + Number(c.saldo || 0), 0);
   const disponivel = saldoContas - faturasAbertas;
 
@@ -482,7 +482,7 @@ export default function VisaoClient() {
         <p className="text-3xl font-bold" style={{ color: disponivel < 0 ? "var(--danger)" : "#4caf82" }}>{brl(disponivel)}</p>
         <div className="flex gap-3 mt-1 flex-wrap">
           <span className="text-xs" style={{ color: "var(--text-muted)" }}>Saldo em contas <span style={{ color: "var(--text)" }}>{brl(saldoContas)}</span></span>
-          <span className="text-xs" style={{ color: "var(--text-muted)" }}>− Faturas em aberto <span style={{ color: faturasAbertas > 0 ? "var(--danger)" : "var(--text-muted)" }}>{brl(faturasAbertas)}</span></span>
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>− Faturas do mês em aberto <span style={{ color: faturasAbertas > 0 ? "var(--danger)" : "var(--text-muted)" }}>{brl(faturasAbertas)}</span></span>
         </div>
         <div className="mt-1 pt-2 border-t flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
           <span className="text-xs" style={{ color: "var(--text-muted)" }}>Resultado do mês (receitas − despesas)</span>
