@@ -8,7 +8,7 @@ import {
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/hooks/useWorkspace";
-import { brl, mesAtual, mesDoLanc, formatData, MESES } from "@/lib/utils";
+import { brl, mesAtual, mesDoLanc, mesFatura, mesAnterior, formatData, MESES } from "@/lib/utils";
 import type { Lancamento, Conta, Cartao, Orcamento } from "@/types/database";
 import { iconeDaCategoria, corDaCategoria, type CatMeta } from "@/components/layout/categoryIcons";
 import { cacheGet, cacheSet, cacheClear } from "@/lib/cache";
@@ -303,16 +303,17 @@ export default function VisaoClient() {
   const [searchQuery, setSearchQuery] = useState("");
   const [gruposAbertos, setGruposAbertos] = useState<Record<string, boolean>>({});
 
-  const [faturasAbertas, setFaturasAbertas] = useState(0);
+  const [itensCartaoJanela, setItensCartaoJanela] = useState<{ valor: number; data: string; cartao_id: string; pago: boolean }[]>([]);
 
   const carregar = useCallback(async () => {
     if (!workspaceId) return;
     const chave = `visao:${workspaceId}:${mes}`;
 
+    type ItemCartao = { valor: number; data: string; cartao_id: string; pago: boolean };
     type DadosVisao = {
       lancs: Lancamento[]; cts: Conta[]; carts: Cartao[];
       orcs: Orcamento[]; cat: CategoriaRow[]; cm: CatMeta[];
-      fatAbertas: number;
+      itensCartao: ItemCartao[];
     };
 
     const aplicar = (d: DadosVisao) => {
@@ -322,7 +323,7 @@ export default function VisaoClient() {
       setOrcamentos(d.orcs);
       setCategorias(d.cat);
       setCatMeta(d.cm);
-      setFaturasAbertas(d.fatAbertas);
+      setItensCartaoJanela(d.itensCartao);
     };
 
     // Mostra o último dado conhecido na hora; revalida em segundo plano
@@ -333,7 +334,7 @@ export default function VisaoClient() {
     const supabase = createClient();
     const inicio = `${mes}-01`;
     const fim = proximoMes(mes);
-    const [{ data: lancs }, { data: cts }, { data: carts }, { data: orcs }, { data: cat }, { data: cm }, { data: abertas }] = await Promise.all([
+    const [{ data: lancs }, { data: cts }, { data: carts }, { data: orcs }, { data: cat }, { data: cm }, { data: itensCard }] = await Promise.all([
       // Só os lançamentos do mês selecionado (antes vinha a história inteira)
       supabase.from("lancamentos").select("*").eq("workspace_id", workspaceId)
         .gte("data", inicio).lt("data", fim).order("data", { ascending: false }),
@@ -342,10 +343,11 @@ export default function VisaoClient() {
       supabase.from("orcamentos").select("*").eq("workspace_id", workspaceId),
       supabase.from("categorias").select("*").eq("workspace_id", workspaceId).order("ordem"),
       supabase.from("cat_meta").select("*").eq("workspace_id", workspaceId),
-      // Faturas em aberto SOMENTE do mês selecionado (só a coluna valor)
-      supabase.from("lancamentos").select("valor").eq("workspace_id", workspaceId)
-        .eq("tipo", "despesa").eq("pago", false).not("cartao_id", "is", null)
-        .gte("data", inicio).lt("data", fim),
+      // Itens de cartão do mês anterior + mês selecionado: janela suficiente para
+      // montar a fatura-ciclo do mês (compras após o fechamento do mês anterior)
+      supabase.from("lancamentos").select("valor, data, cartao_id, pago").eq("workspace_id", workspaceId)
+        .eq("tipo", "despesa").not("cartao_id", "is", null)
+        .gte("data", `${mesAnterior(mes)}-01`).lt("data", fim),
     ]);
     const dados: DadosVisao = {
       lancs: (lancs || []) as unknown as Lancamento[],
@@ -354,8 +356,7 @@ export default function VisaoClient() {
       orcs: (orcs || []) as unknown as Orcamento[],
       cat: (cat || []) as unknown as CategoriaRow[],
       cm: (cm || []) as unknown as CatMeta[],
-      fatAbertas: ((abertas || []) as unknown as { valor: number }[])
-        .reduce((s, r) => s + Number(r.valor), 0),
+      itensCartao: (itensCard || []) as unknown as ItemCartao[],
     };
     cacheSet(chave, dados);
     aplicar(dados);
@@ -401,8 +402,11 @@ export default function VisaoClient() {
   const despesasMes = despesas.reduce((s, l) => s + Number(l.valor), 0);
   const resultadoMes = receitasMes - despesasMes;
 
-  // Disponível real: saldo das contas − faturas em aberto DO MÊS selecionado
-  // (query dedicada no servidor; meses anteriores e parcelas futuras ficam de fora)
+  // Disponível real: saldo das contas − fatura-ciclo em aberto DO MÊS selecionado
+  // (respeita o dia de fechamento de cada cartão)
+  const fechamentoDe = (cartaoId: string) => cartoes.find(c => c.id === cartaoId)?.fechamento ?? null;
+  const itensFaturaMes = itensCartaoJanela.filter(i => mesFatura(i.data, fechamentoDe(i.cartao_id)) === mes);
+  const faturasAbertas = itensFaturaMes.filter(i => !i.pago).reduce((s, i) => s + Number(i.valor), 0);
   const saldoContas = contas.reduce((s, c) => s + Number(c.saldo || 0), 0);
   const disponivel = saldoContas - faturasAbertas;
 
