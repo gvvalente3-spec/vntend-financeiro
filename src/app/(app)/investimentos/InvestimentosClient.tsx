@@ -332,6 +332,7 @@ export default function InvestimentosClient() {
   const { workspaceId, loading: wsLoading } = useWorkspace();
   const [itens, setItens] = useState<Investimento[]>([]);
   const [metas, setMetas] = useState<InvestMetas | null>(null);
+  const [aportesPgblAno, setAportesPgblAno] = useState(0);
   const [carregando, setCarregando] = useState(true);
 
   // UI
@@ -350,12 +351,19 @@ export default function InvestimentosClient() {
     if (!workspaceId) return;
     setCarregando(true);
     const supabase = createClient();
-    const [{ data: invs }, { data: meta }] = await Promise.all([
+    const anoAtual = new Date().getFullYear();
+    const [{ data: invs }, { data: meta }, { data: aportesPgbl }] = await Promise.all([
       supabase.from("investimentos").select("*").eq("workspace_id", workspaceId).order("categoria"),
       supabase.from("invest_metas").select("*").eq("workspace_id", workspaceId).maybeSingle(),
+      // Aportes PGBL do ano corrente: lançamentos marcados como fiscal = "pgbl"
+      supabase.from("lancamentos").select("valor").eq("workspace_id", workspaceId)
+        .eq("fiscal", "pgbl")
+        .gte("data", `${anoAtual}-01-01`).lt("data", `${anoAtual + 1}-01-01`),
     ]);
     setItens((invs || []) as unknown as Investimento[]);
     setMetas(meta as unknown as InvestMetas | null);
+    setAportesPgblAno(((aportesPgbl || []) as unknown as { valor: number }[])
+      .reduce((s, r) => s + Number(r.valor), 0));
     setCarregando(false);
   }, [workspaceId]);
 
@@ -601,19 +609,29 @@ export default function InvestimentosClient() {
           <div className="flex flex-col gap-3">
             {objetivosCustom.map(obj => {
               const meta = Number(obj.meta) || 0;
+              const ehPgbl = obj.id === "pgbl";
               // Mantemos retrocompatibilidade com a categoria "pgbl" antiga apenas para fallback
-              const atual = visiveis.filter(i => i.obj === obj.id || (obj.id === 'pgbl' && i.categoria === 'pgbl')).reduce((s, i) => s + valorAtual(i, ptax), 0);
+              const totalObj = visiveis.filter(i => i.obj === obj.id || (ehPgbl && i.categoria === "pgbl")).reduce((s, i) => s + valorAtual(i, ptax), 0);
+              // PGBL: o objetivo é ANUAL (dedução no IR) — mede só os aportes do ano corrente
+              const atual = ehPgbl ? aportesPgblAno : totalObj;
               const pct = meta > 0 ? Math.min((atual / meta) * 100, 100) : 0;
               return (
                 <div key={obj.id}>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>{obj.emoji} {obj.nome}</span>
+                    <span className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>
+                      {obj.emoji} {obj.nome}{ehPgbl ? ` · aportes ${new Date().getFullYear()}` : ""}
+                    </span>
                     <span className="text-xs font-medium">{brl(atual)} / <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>{meta > 0 ? brl(meta) : "S/ Meta"}</span></span>
                   </div>
                   <div className="h-1.5 rounded-full" style={{ background: "var(--surface2)" }}>
                     <div className="h-1.5 rounded-full transition-all" style={{ width: `${pct}%`, background: pct >= 100 ? "#4caf82" : "var(--primary)" }} />
                   </div>
                   {meta > 0 && <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>{pct.toFixed(0)}% atingido</p>}
+                  {ehPgbl && totalObj > 0 && (
+                    <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+                      Saldo total PGBL: {brl(totalObj)} · acumulado de anos anteriores: {brl(Math.max(totalObj - aportesPgblAno, 0))}
+                    </p>
+                  )}
                 </div>
               );
             })}
