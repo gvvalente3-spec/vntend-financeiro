@@ -15,6 +15,26 @@ export function mesDoLanc(dataISO: string) {
   return (dataISO || "").slice(0, 7);
 }
 
+// Mês da FATURA de uma compra no cartão: compra com dia posterior ao
+// fechamento entra na fatura do mês seguinte. Sem fechamento definido
+// (null/0), agrupa pelo mês-calendário da compra, como antes.
+export function mesFatura(dataISO: string, fechamento?: number | null) {
+  const mesCal = mesDoLanc(dataISO);
+  const f = Number(fechamento || 0);
+  if (!f || !mesCal) return mesCal;
+  const dia = Number((dataISO || "").slice(8, 10));
+  if (dia > f) {
+    const [y, m] = mesCal.split("-").map(Number);
+    return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+  }
+  return mesCal;
+}
+
+export function mesAnterior(mes: string) {
+  const [y, m] = mes.split("-").map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+}
+
 export function formatData(dataISO: string) {
   return dataISO.split("-").reverse().join("/");
 }
