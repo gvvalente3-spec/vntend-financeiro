@@ -147,8 +147,8 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cate
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ background: "rgba(0,0,0,0.5)" }} onClick={fechar}>
-      <div className="w-full max-w-2xl rounded-t-2xl sm:rounded-2xl flex flex-col max-h-[90vh]"
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center pb-12 sm:pb-0" style={{ background: "rgba(0,0,0,0.5)" }} onClick={fechar}>
+      <div className="w-full max-w-2xl rounded-t-2xl sm:rounded-2xl flex flex-col max-h-[80vh]"
         style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
         onClick={e => e.stopPropagation()}>
         {/* Header */}
