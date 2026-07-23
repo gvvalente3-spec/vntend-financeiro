@@ -22,6 +22,8 @@ interface LinhaCSV {
   sub: string;
   subsub: string;
   duplicata: boolean;
+  possivelDuplicata: boolean;
+  descricaoExistente: string;
 }
 
 const inp = { background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 6, padding: "4px 8px", fontSize: 13, width: "100%" };
@@ -99,13 +101,29 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cate
       const data = normalizaData(r[colData] || "");
       const descricao = (r[colDesc] || "").trim();
       const valor = parseValorBR(r[colValor] || "");
-      const duplicata = lancamentos.some(l =>
+
+      // Duplicata certa: mesmo cartão, data, valor e descrição
+      const match = lancamentos.find(l =>
         l.cartao_id === cartaoId &&
         l.data === data &&
         Math.abs(Number(l.valor) - valor) < 0.01 &&
         l.descricao === descricao
       );
-      return { incluir: !duplicata, data, descricao, valor, cat: "", sub: "", subsub: "", duplicata };
+      // Possível duplicata: mesmo cartão, data e valor, mas descrição diferente
+      // (cobre o caso de lançar manualmente com um nome e a fatura trazer outro)
+      const matchValor = !match ? lancamentos.find(l =>
+        l.cartao_id === cartaoId &&
+        l.data === data &&
+        Math.abs(Number(l.valor) - valor) < 0.01
+      ) : undefined;
+
+      const duplicata = !!match;
+      const possivelDuplicata = !!matchValor;
+      return {
+        incluir: !duplicata, data, descricao, valor, cat: "", sub: "", subsub: "",
+        duplicata, possivelDuplicata,
+        descricaoExistente: matchValor?.descricao || "",
+      };
     }).filter(r => r.valor > 0);
     setLinhas(novas);
     setEtapa("revisar");
@@ -233,9 +251,10 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cate
                   const nivel3 = l.cat && l.sub
                     ? [...new Set(catsDespesa.filter(c => c.cat === l.cat && c.sub === l.sub && c.subsub).map(c => c.subsub as string))].sort()
                     : [];
+                  const alerta = l.duplicata || l.possivelDuplicata;
                   return (
                     <div key={i} className="rounded-lg px-3 py-2 flex flex-col gap-1.5"
-                      style={{ background: l.duplicata ? "rgba(192,73,47,0.06)" : "var(--surface2)", border: `1px solid ${l.duplicata ? "rgba(192,73,47,0.2)" : "var(--border)"}`, opacity: l.incluir ? 1 : 0.5 }}>
+                      style={{ background: alerta ? "rgba(192,73,47,0.06)" : "var(--surface2)", border: `1px solid ${alerta ? "rgba(192,73,47,0.2)" : "var(--border)"}`, opacity: l.incluir ? 1 : 0.5 }}>
                       <div className="flex items-center gap-2">
                         <input type="checkbox" checked={l.incluir} onChange={e => setLinha(i, "incluir", e.target.checked)} className="flex-shrink-0" />
                         <span className="text-xs w-20 flex-shrink-0" style={{ color: "var(--text-muted)" }}>{l.data || "—"}</span>
@@ -246,7 +265,13 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cate
                           className="text-xs outline-none rounded px-1 w-20 text-right"
                           style={{ background: "transparent", color: "var(--text)" }} />
                         {l.duplicata && <span className="text-xs flex-shrink-0" style={{ color: "var(--danger)" }}>dup</span>}
+                        {!l.duplicata && l.possivelDuplicata && <span className="text-xs flex-shrink-0" style={{ color: "var(--warning)" }}>≈ dup?</span>}
                       </div>
+                      {!l.duplicata && l.possivelDuplicata && (
+                        <p className="text-xs pl-6" style={{ color: "var(--warning)" }}>
+                          Mesma data e valor de um lançamento já existente: &quot;{l.descricaoExistente}&quot;. Confira antes de importar.
+                        </p>
+                      )}
                       {l.incluir && (
                         <div className="flex items-center gap-1.5 pl-6 flex-wrap">
                           <select value={l.cat} onChange={e => setLinha(i, "cat", e.target.value)}
