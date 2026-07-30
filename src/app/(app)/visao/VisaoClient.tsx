@@ -303,13 +303,13 @@ export default function VisaoClient() {
   const [searchQuery, setSearchQuery] = useState("");
   const [gruposAbertos, setGruposAbertos] = useState<Record<string, boolean>>({});
 
-  const [itensCartaoJanela, setItensCartaoJanela] = useState<{ valor: number; data: string; cartao_id: string; pago: boolean }[]>([]);
+  const [itensCartaoJanela, setItensCartaoJanela] = useState<{ valor: number; data: string; cartao_id: string; pago: boolean; tipo: "despesa" | "receita" }[]>([]);
 
   const carregar = useCallback(async () => {
     if (!workspaceId) return;
     const chave = `visao:${workspaceId}:${mes}`;
 
-    type ItemCartao = { valor: number; data: string; cartao_id: string; pago: boolean };
+    type ItemCartao = { valor: number; data: string; cartao_id: string; pago: boolean; tipo: "despesa" | "receita" };
     type DadosVisao = {
       lancs: Lancamento[]; cts: Conta[]; carts: Cartao[];
       orcs: Orcamento[]; cat: CategoriaRow[]; cm: CatMeta[];
@@ -345,8 +345,8 @@ export default function VisaoClient() {
       supabase.from("cat_meta").select("*").eq("workspace_id", workspaceId),
       // Itens de cartão do mês anterior + mês selecionado: janela suficiente para
       // montar a fatura-ciclo do mês (compras após o fechamento do mês anterior)
-      supabase.from("lancamentos").select("valor, data, cartao_id, pago").eq("workspace_id", workspaceId)
-        .eq("tipo", "despesa").not("cartao_id", "is", null)
+      supabase.from("lancamentos").select("valor, data, cartao_id, pago, tipo").eq("workspace_id", workspaceId)
+        .not("cartao_id", "is", null)
         .gte("data", `${mesAnterior(mes)}-01`).lt("data", fim),
     ]);
     const dados: DadosVisao = {
@@ -406,7 +406,8 @@ export default function VisaoClient() {
   // (respeita o dia de fechamento de cada cartão)
   const fechamentoDe = (cartaoId: string) => cartoes.find(c => c.id === cartaoId)?.fechamento ?? null;
   const itensFaturaMes = itensCartaoJanela.filter(i => mesFatura(i.data, fechamentoDe(i.cartao_id)) === mes);
-  const faturasAbertas = itensFaturaMes.filter(i => !i.pago).reduce((s, i) => s + Number(i.valor), 0);
+  const faturasAbertas = itensFaturaMes.filter(i => !i.pago)
+    .reduce((s, i) => s + (i.tipo === "receita" ? -1 : 1) * Number(i.valor), 0);
   const saldoContas = contas.reduce((s, c) => s + Number(c.saldo || 0), 0);
   const disponivel = saldoContas - faturasAbertas;
 
