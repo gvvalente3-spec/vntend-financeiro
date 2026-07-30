@@ -14,6 +14,11 @@ const inputStyle = {
 };
 const labelStyle = { display: "flex", flexDirection: "column" as const, gap: 4, fontSize: 13, color: "var(--text-muted)" };
 
+// Valor de um item na fatura, com sinal: um crédito no cartão (estorno de compra,
+// desconto rateado, chargeback) é lançado como "receita" e ABATE a fatura em vez
+// de somar. Sem isso, um estorno de R$ 100 inflava a fatura em R$ 100.
+const valorFatura = (l: Lancamento) => (l.tipo === "receita" ? -1 : 1) * Number(l.valor);
+
 // ——— Modal ———
 function Modal({ titulo, fechar, children }: { titulo: string; fechar: () => void; children: React.ReactNode }) {
   return (
@@ -410,7 +415,7 @@ export default function ContasClient() {
         <div className="flex flex-col gap-2">
           {cartoes.map(c => {
             const itens = itensMes(c);
-            const fatura = itens.reduce((s, l) => s + Number(l.valor), 0);
+            const fatura = itens.reduce((s, l) => s + valorFatura(l), 0);
             const todaoPaga = itens.length > 0 && itens.every(l => l.pago);
             const algumAberto = itens.some(l => !l.pago);
             const aberto = cartaoAberto === c.id;
@@ -438,8 +443,8 @@ export default function ContasClient() {
                       </span>
                     )}
                     <span className="text-sm font-semibold"
-                      style={{ color: fatura > 0 ? (todaoPaga ? "var(--text-muted)" : "var(--danger)") : "var(--text-muted)" }}>
-                      {fatura > 0 ? `${todaoPaga ? "" : "−"}${brl(fatura)}` : brl(0)}
+                      style={{ color: fatura > 0 ? (todaoPaga ? "var(--text-muted)" : "var(--danger)") : fatura < 0 ? "var(--primary)" : "var(--text-muted)" }}>
+                      {fatura > 0 ? `${todaoPaga ? "" : "−"}${brl(fatura)}` : fatura < 0 ? `+${brl(-fatura)}` : brl(0)}
                     </span>
                     <ChevronDown size={16} style={{ color: "var(--text-muted)", transform: aberto ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
                   </div>
@@ -494,7 +499,7 @@ export default function ContasClient() {
                         style={{ background: l.pago ? "rgba(42,138,114,0.07)" : "var(--surface2)", border: `1px solid ${l.pago ? "rgba(42,138,114,0.2)" : "var(--border)"}` }}>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm truncate" style={{ textDecoration: l.pago ? "line-through" : "none", color: l.pago ? "var(--text-muted)" : "var(--text)" }}>
-                            {l.descricao || "Despesa"}
+                            {l.descricao || (l.tipo === "receita" ? "Crédito" : "Despesa")}
                           </p>
                           <p className="text-xs" style={{ color: "var(--text-muted)" }}>
                             {l.cat}{l.sub ? ` › ${l.sub}` : ""} · {formatData(l.data)}
@@ -502,8 +507,8 @@ export default function ContasClient() {
                           </p>
                         </div>
                         <span className="text-sm font-semibold flex-shrink-0"
-                          style={{ color: l.pago ? "var(--text-muted)" : "var(--danger)" }}>
-                          −{brl(l.valor)}
+                          style={{ color: l.pago ? "var(--text-muted)" : l.tipo === "receita" ? "var(--primary)" : "var(--danger)" }}>
+                          {l.tipo === "receita" ? "+" : "−"}{brl(l.valor)}
                         </span>
                         <button onClick={() => setEditItem(l)} style={{ color: "var(--text-muted)" }}><Pencil size={13} /></button>
                         <button onClick={() => delItem(l.id)} style={{ color: "var(--text-muted)" }}><Trash2 size={13} /></button>
@@ -514,8 +519,8 @@ export default function ContasClient() {
                       <div className="flex justify-between pt-1 border-t text-sm font-semibold"
                         style={{ borderColor: "var(--border)" }}>
                         <span>Total</span>
-                        <span style={{ color: todaoPaga ? "var(--text-muted)" : "var(--danger)" }}>
-                          −{brl(fatura)}
+                        <span style={{ color: todaoPaga ? "var(--text-muted)" : fatura < 0 ? "var(--primary)" : "var(--danger)" }}>
+                          {fatura < 0 ? `+${brl(-fatura)}` : `−${brl(fatura)}`}
                         </span>
                       </div>
                     )}
@@ -541,7 +546,7 @@ export default function ContasClient() {
           : <FormPagarFatura
               cartao={pagarCartao}
               mes={mes}
-              valorSugerido={itensMes(pagarCartao).filter(l => !l.pago).reduce((s, l) => s + Number(l.valor), 0)}
+              valorSugerido={itensMes(pagarCartao).filter(l => !l.pago).reduce((s, l) => s + valorFatura(l), 0)}
               idsAbertos={itensMes(pagarCartao).filter(l => !l.pago).map(l => l.id)}
               contas={contas}
               workspaceId={workspaceId}
