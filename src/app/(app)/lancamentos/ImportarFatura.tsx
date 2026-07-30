@@ -4,7 +4,6 @@ import { useState } from "react";
 import Papa from "papaparse";
 import { Upload, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { brl, mesDoLanc } from "@/lib/utils";
 import type { Lancamento, Cartao } from "@/types/database";
 
 // Linha da tabela "categorias" (mesma fonte usada pelo formulário manual)
@@ -24,9 +23,14 @@ interface LinhaCSV {
   duplicata: boolean;
   possivelDuplicata: boolean;
   descricaoExistente: string;
+  pagamento: boolean;
 }
 
 const inp = { background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 6, padding: "4px 8px", fontSize: 13, width: "100%" };
+
+// Valor de um lançamento já existente, com sinal: crédito no cartão (tipo "receita")
+// conta como negativo, para casar com linhas negativas do CSV na checagem de duplicata.
+const valorAssinado = (l: Lancamento) => (l.tipo === "receita" ? -1 : 1) * Number(l.valor);
 
 export default function ImportarFatura({ workspaceId, cartoes, lancamentos, categorias, fechar, onSalvo }: {
   workspaceId: string;
@@ -48,7 +52,7 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cate
   const [erro, setErro] = useState("");
 
   const catsDespesa = categorias.filter(c => c.tipo === "despesa");
-  const nivel1Despesa = [...new Set(catsDespesa.map(c => c.cat))].sort();
+  const catsReceita = categorias.filter(c => c.tipo === "receita");
 
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -79,7 +83,9 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cate
     if (s.includes(",") && s.includes(".")) s = s.replace(/\./g, "").replace(",", ".");
     else if (s.includes(",")) s = s.replace(",", ".");
     const n = parseFloat(s);
-    return isNaN(n) ? 0 : Math.abs(n);
+    // NÃO usar Math.abs: valor negativo no CSV é crédito (estorno, desconto,
+    // chargeback) e precisa continuar negativo para abater a fatura.
+    return isNaN(n) ? 0 : n;
   }
 
   function normalizaData(d: string) {
@@ -102,11 +108,11 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cate
       const descricao = (r[colDesc] || "").trim();
       const valor = parseValorBR(r[colValor] || "");
 
-      // Duplicata certa: mesmo cartão, data, valor e descrição
+      // Duplicata certa: mesmo cartão, data, valor (com sinal) e descrição
       const match = lancamentos.find(l =>
         l.cartao_id === cartaoId &&
         l.data === data &&
-        Math.abs(Number(l.valor) - valor) < 0.01 &&
+        Math.abs(valorAssinado(l) - valor) < 0.01 &&
         l.descricao === descricao
       );
       // Possível duplicata: mesmo cartão, data e valor, mas descrição diferente
@@ -114,17 +120,21 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cate
       const matchValor = !match ? lancamentos.find(l =>
         l.cartao_id === cartaoId &&
         l.data === data &&
-        Math.abs(Number(l.valor) - valor) < 0.01
+        Math.abs(valorAssinado(l) - valor) < 0.01
       ) : undefined;
 
       const duplicata = !!match;
       const possivelDuplicata = !!matchValor;
+      // "Pagamento de fatura" / "Pagamento recebido" é transferência da conta para o
+      // cartão, não é gasto nem crédito de compra. Fica desmarcado por padrão — o
+      // lugar certo dele é a tela Pagar fatura, que grava em pagamentos_fatura.
+      const pagamento = /pagamento/i.test(descricao);
       return {
-        incluir: !duplicata, data, descricao, valor, cat: "", sub: "", subsub: "",
-        duplicata, possivelDuplicata,
+        incluir: !duplicata && !pagamento, data, descricao, valor, cat: "", sub: "", subsub: "",
+        duplicata, possivelDuplicata, pagamento,
         descricaoExistente: matchValor?.descricao || "",
       };
-    }).filter(r => r.valor > 0);
+    }).filter(r => r.valor !== 0);
     setLinhas(novas);
     setEtapa("revisar");
   }
@@ -136,8 +146,10 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cate
     await createClient().from("lancamentos").insert(
       selecionadas.map(l => ({
         workspace_id: workspaceId,
-        tipo: "despesa",
-        valor: l.valor,
+        // Valor negativo = crédito na fatura: grava como receita para ABATER,
+        // em vez de somar como se fosse mais uma despesa.
+        tipo: l.valor < 0 ? "receita" : "despesa",
+        valor: Math.abs(l.valor),
         descricao: l.descricao,
         data: l.data || new Date().toISOString().slice(0, 10),
         cat: l.cat || "",
@@ -245,13 +257,17 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cate
               </div>
               <div className="flex flex-col gap-1">
                 {linhas.map((l, i) => {
+                  // Linha de crédito usa a árvore de categorias de RECEITA
+                  const credito = l.valor < 0;
+                  const catsLinha = credito ? catsReceita : catsDespesa;
+                  const nivel1 = [...new Set(catsLinha.map(c => c.cat))].sort();
                   const nivel2 = l.cat
-                    ? [...new Set(catsDespesa.filter(c => c.cat === l.cat && c.sub).map(c => c.sub as string))].sort()
+                    ? [...new Set(catsLinha.filter(c => c.cat === l.cat && c.sub).map(c => c.sub as string))].sort()
                     : [];
                   const nivel3 = l.cat && l.sub
-                    ? [...new Set(catsDespesa.filter(c => c.cat === l.cat && c.sub === l.sub && c.subsub).map(c => c.subsub as string))].sort()
+                    ? [...new Set(catsLinha.filter(c => c.cat === l.cat && c.sub === l.sub && c.subsub).map(c => c.subsub as string))].sort()
                     : [];
-                  const alerta = l.duplicata || l.possivelDuplicata;
+                  const alerta = l.duplicata || l.possivelDuplicata || l.pagamento;
                   return (
                     <div key={i} className="rounded-lg px-3 py-2 flex flex-col gap-1.5"
                       style={{ background: alerta ? "rgba(192,73,47,0.06)" : "var(--surface2)", border: `1px solid ${alerta ? "rgba(192,73,47,0.2)" : "var(--border)"}`, opacity: l.incluir ? 1 : 0.5 }}>
@@ -264,9 +280,16 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cate
                         <input type="number" value={l.valor} onChange={e => setLinha(i, "valor", Number(e.target.value))}
                           className="text-xs outline-none rounded px-1 w-20 text-right"
                           style={{ background: "transparent", color: "var(--text)" }} />
+                        {l.pagamento && <span className="text-xs flex-shrink-0 px-1.5 py-0.5 rounded" style={{ background: "rgba(201,149,45,0.18)", color: "var(--warning)" }}>pagamento</span>}
+                        {credito && !l.pagamento && <span className="text-xs flex-shrink-0 px-1.5 py-0.5 rounded" style={{ background: "rgba(42,138,114,0.15)", color: "var(--primary)" }}>crédito</span>}
                         {l.duplicata && <span className="text-xs flex-shrink-0" style={{ color: "var(--danger)" }}>dup</span>}
                         {!l.duplicata && l.possivelDuplicata && <span className="text-xs flex-shrink-0" style={{ color: "var(--warning)" }}>≈ dup?</span>}
                       </div>
+                      {l.pagamento && (
+                        <p className="text-xs pl-6" style={{ color: "var(--warning)" }}>
+                          Parece o pagamento da fatura anterior — é transferência, não gasto. Use a tela Pagar fatura em vez de importar aqui.
+                        </p>
+                      )}
                       {!l.duplicata && l.possivelDuplicata && (
                         <p className="text-xs pl-6" style={{ color: "var(--warning)" }}>
                           Mesma data e valor de um lançamento já existente: &quot;{l.descricaoExistente}&quot;. Confira antes de importar.
@@ -278,7 +301,7 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cate
                             className="text-xs outline-none rounded px-1 py-0.5"
                             style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", maxWidth: 130 }}>
                             <option value="">Categoria…</option>
-                            {nivel1Despesa.map(c => <option key={c} value={c}>{c}</option>)}
+                            {nivel1.map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
                           {nivel2.length > 0 && (
                             <select value={l.sub} onChange={e => setLinha(i, "sub", e.target.value)}
