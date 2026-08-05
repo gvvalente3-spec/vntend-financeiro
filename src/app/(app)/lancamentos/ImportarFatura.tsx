@@ -32,6 +32,21 @@ const inp = { background: "var(--surface2)", border: "1px solid var(--border)", 
 // conta como negativo, para casar com linhas negativas do CSV na checagem de duplicata.
 const valorAssinado = (l: Lancamento) => (l.tipo === "receita" ? -1 : 1) * Number(l.valor);
 
+// Tolerância de dias entre a data da fatura e a data já lançada. A fatura
+// costuma trazer a data de PROCESSAMENTO, 1–3 dias depois da compra, então uma
+// duplicata legítima quase nunca cai no mesmo dia exato. Ajuste aqui se quiser.
+const TOL_DIAS = 3;
+// Diferença absoluta em dias entre duas datas "YYYY-MM-DD".
+const diffDias = (a: string, b: string) =>
+  (!a || !b) ? Infinity
+  : Math.abs(new Date(a + "T00:00:00").getTime() - new Date(b + "T00:00:00").getTime()) / 86400000;
+// Desloca uma data "YYYY-MM-DD" em N dias (para alargar a janela de busca).
+const shiftData = (d: string, dias: number) => {
+  const t = new Date(d + "T00:00:00");
+  t.setDate(t.getDate() + dias);
+  return t.toISOString().slice(0, 10);
+};
+
 export default function ImportarFatura({ workspaceId, cartoes, lancamentos, categorias, fechar, onSalvo }: {
   workspaceId: string;
   cartoes: Cartao[];
@@ -101,26 +116,54 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cate
     return "";
   }
 
-  function revisar() {
+  async function revisar() {
     if (!colValor) { setErro("Escolha ao menos a coluna do valor."); return; }
-    const novas: LinhaCSV[] = rows.map(r => {
-      const data = normalizaData(r[colData] || "");
-      const descricao = (r[colDesc] || "").trim();
-      const valor = parseValorBR(r[colValor] || "");
+    setErro("");
 
-      // Duplicata certa: mesmo cartão, data, valor (com sinal) e descrição
-      const match = lancamentos.find(l =>
+    // Normaliza as linhas do CSV antes de checar duplicata
+    const preparadas = rows.map(r => ({
+      data: normalizaData(r[colData] || ""),
+      descricao: (r[colDesc] || "").trim(),
+      valor: parseValorBR(r[colValor] || ""),
+    })).filter(r => r.valor !== 0);
+
+    // A tela de Lançamentos só carrega o MÊS aberto na tela. Se a checagem de
+    // duplicata usasse essa lista (prop `lancamentos`), qualquer fatura que
+    // cruza a virada do mês — ou importada com outro mês selecionado — não
+    // acharia os lançamentos já gravados e passaria batido. Por isso buscamos
+    // aqui o histórico exato da janela de datas do próprio arquivo.
+    let existentes: Lancamento[] = lancamentos;
+    const datas = preparadas.map(r => r.data).filter(Boolean).sort();
+    if (datas.length) {
+      const { data: hist } = await createClient()
+        .from("lancamentos")
+        .select("id, cartao_id, data, valor, tipo, descricao")
+        .eq("workspace_id", workspaceId)
+        .gte("data", shiftData(datas[0], -TOL_DIAS))
+        .lte("data", shiftData(datas[datas.length - 1], TOL_DIAS));
+      if (hist) existentes = hist as unknown as Lancamento[];
+    }
+
+    const novas: LinhaCSV[] = preparadas.map(({ data, descricao, valor }) => {
+      // Duplicata certa (desmarca sozinho): bate TUDO — cartão, valor, descrição
+      // E data exata. Conservador de propósito: só some com uma linha automa-
+      // ticamente quando é praticamente certo (ex.: reimportar a mesma fatura).
+      const match = existentes.find(l =>
         l.cartao_id === cartaoId &&
         l.data === data &&
         Math.abs(valorAssinado(l) - valor) < 0.01 &&
         l.descricao === descricao
       );
-      // Possível duplicata: mesmo cartão, data e valor, mas descrição diferente
-      // (cobre o caso de lançar manualmente com um nome e a fatura trazer outro)
-      const matchValor = !match ? lancamentos.find(l =>
+      // Possível duplicata (só ALERTA, não desmarca): mesmo cartão e valor, com
+      // data PRÓXIMA (até TOL_DIAS de diferença). Pega os dois casos reais: (a)
+      // descrição diferente entre o lançamento manual e o nome que a fatura traz;
+      // (b) descasamento entre a data da compra e a data de processamento. Fica
+      // como aviso porque mesmo valor + data próxima também pode ser outra compra
+      // legítima (assinatura, pedido repetido) — quem decide é você.
+      const matchValor = !match ? existentes.find(l =>
         l.cartao_id === cartaoId &&
-        l.data === data &&
-        Math.abs(valorAssinado(l) - valor) < 0.01
+        Math.abs(valorAssinado(l) - valor) < 0.01 &&
+        diffDias(l.data, data) <= TOL_DIAS
       ) : undefined;
 
       const duplicata = !!match;
@@ -134,7 +177,7 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cate
         duplicata, possivelDuplicata, pagamento,
         descricaoExistente: matchValor?.descricao || "",
       };
-    }).filter(r => r.valor !== 0);
+    });
     setLinhas(novas);
     setEtapa("revisar");
   }
@@ -293,7 +336,7 @@ export default function ImportarFatura({ workspaceId, cartoes, lancamentos, cate
                       )}
                       {!l.duplicata && l.possivelDuplicata && (
                         <p className="text-xs pl-6" style={{ color: "var(--warning)" }}>
-                          Mesma data e valor de um lançamento já existente: &quot;{l.descricaoExistente}&quot;. Confira antes de importar.
+                          Mesmo valor e data próxima de um lançamento já existente: &quot;{l.descricaoExistente}&quot;. Confira antes de importar.
                         </p>
                       )}
                       {l.incluir && (
